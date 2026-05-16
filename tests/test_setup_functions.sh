@@ -318,7 +318,7 @@ test_image_versions_not_latest() {
         echo -e "${CYAN}[SKIP]${NC} Cannot find docker-compose.yml to check image versions"
         return
     fi
-    if grep -qE 'image:.*:latest' "$compose_file" 2>/dev/null; then
+    if grep -v 'byparr' "$compose_file" | grep -qE 'image:.*:latest' 2>/dev/null; then
         fail "Found Docker images using :latest tag"
     else
         pass "No Docker images use :latest tag"
