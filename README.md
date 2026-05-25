@@ -1,14 +1,61 @@
-# TorBox Media Server — All-in-One Setup
+<div align="center">
 
-A single script that installs, configures, and runs a complete debrid-powered media server using Docker. **No media is stored locally** — everything streams from [TorBox](https://torbox.app).
+# 🎬 TorBox Media Server
 
-## What Is This?
+**A single-command, zero-storage personal streaming setup — powered by TorBox cloud.**
 
-Imagine having your own personal Netflix, where **you** decide what's available. Instead of downloading movies and TV shows to your computer, a cloud service called [TorBox](https://torbox.app) handles all the downloading and storage for you. Your media server then streams directly from TorBox's cloud — no large hard drives needed, no waiting for downloads, no storage management.
+[![ShellCheck](https://github.com/nordicnode/TorBox-Media-Server/actions/workflows/lint.yml/badge.svg)](https://github.com/nordicnode/TorBox-Media-Server/actions/workflows/lint.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docker](https://img.shields.io/badge/Requires-Docker-blue?logo=docker)](https://docs.docker.com/get-docker/)
+[![TorBox](https://img.shields.io/badge/Powered%20by-TorBox-orange)](https://torbox.app)
+[![GitHub Stars](https://img.shields.io/github/stars/nordicnode/TorBox-Media-Server?style=social)](https://github.com/nordicnode/TorBox-Media-Server/stargazers)
 
-This setup script builds that entire system for you automatically. It connects several open-source tools together so that when you search for a movie or TV show, it gets found, downloaded in the cloud, and made available to stream on any device in your home — all within seconds for popular content.
+</div>
 
-**In short:** You request → TorBox finds & stores → You stream. Zero local storage.
+> **Your request → TorBox finds & stores → You stream. Zero local storage.**
+
+A single script that installs, configures, and runs a complete debrid-powered media server using Docker. **No media is stored locally** — everything streams from [TorBox](https://torbox.app)'s cloud. Think of it as your own personal Netflix where *you* decide what's available, backed by TorBox's cloud download and cache infrastructure.
+
+## ⚡ Quick Start
+
+```bash
+git clone https://github.com/nordicnode/TorBox-Media-Server.git && cd TorBox-Media-Server
+chmod +x setup.sh && ./setup.sh
+```
+
+For unattended installs:
+
+```bash
+TORBOX_API_KEY="your-api-key" TORBOX_MEDIA_SERVER="plex" ./setup.sh --yes
+```
+
+Run `./setup.sh --help` for all available options.
+
+> **Prerequisites:** A Linux machine with an internet connection, and a [TorBox paid plan](https://torbox.app). The script auto-installs Docker, FUSE, and jq.
+
+---
+
+## 📑 Table of Contents
+
+- [How It Works](#how-it-works)
+- [Architecture](#architecture)
+- [Components](#components)
+- [Before You Begin](#before-you-begin)
+- [Setup Walkthrough](#setup-walkthrough)
+- [What the Script Configures Automatically](#what-the-script-configures-automatically)
+- [Post-Install Walkthrough](#post-install-walkthrough)
+- [Management](#management)
+- [Accessing From Other Devices](#accessing-from-other-devices)
+- [Security Notes](#security-notes)
+- [Updating](#updating)
+- [Uninstalling](#uninstalling)
+- [Troubleshooting](#troubleshooting)
+- [Design Decisions](#design-decisions)
+- [Glossary](#glossary)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ## How It Works
 
@@ -51,6 +98,8 @@ This setup script builds that entire system for you automatically. It connects s
 
 The whole process takes **seconds** for cached content (most popular movies/shows).
 
+---
+
 ## Architecture
 
 ```
@@ -77,6 +126,8 @@ User Request                Search & Automation           Cloud Download
                          └──────────────┘
 ```
 
+---
+
 ## Components
 
 | Service | Port | What It Does |
@@ -91,6 +142,8 @@ User Request                Search & Automation           Cloud Download
 | **Jellyfin** | 8096 | Media server option 2 (open-source, no account needed). Streams your library to any device. |
 
 > **Note:** All service ports including Plex and Jellyfin are bound to `127.0.0.1` (localhost only) by default for security. To stream from other devices on your LAN, you will need to expose the Plex/Jellyfin ports. See [Accessing From Other Devices](#accessing-from-other-devices).
+
+---
 
 ## Before You Begin
 
@@ -125,22 +178,11 @@ The setup script checks for these and can install them automatically:
 | **Docker** + **Docker Compose** | Runs all services in containers | ✅ Yes |
 | **FUSE** | Enables rclone WebDAV mounts | Checked (usually pre-installed) |
 | **jq** | JSON manipulation for advanced auto-configuration | ✅ Yes |
+| **openssl** | Generates random API keys and passwords | ✅ Yes |
 
-## Quick Start
+---
 
-```bash
-git clone https://github.com/nordicnode/TorBox-Media-Server.git && cd TorBox-Media-Server
-chmod +x setup.sh
-./setup.sh
-```
-
-For unattended/automated installs, use `--yes` mode with environment variables:
-
-```bash
-TORBOX_API_KEY="your-api-key" TORBOX_MEDIA_SERVER="plex" ./setup.sh --yes
-```
-
-Run `./setup.sh --help` for all available options.
+## Setup Walkthrough
 
 The script will interactively ask you for:
 
@@ -152,7 +194,7 @@ The script will interactively ask you for:
 | **Hardware acceleration** | Auto-detected; only prompted if both Intel and NVIDIA GPUs are present |
 | **Start services?** | Press Enter or `Y` to start immediately (recommended) |
 
-> **Auto-detected values:** Mount directory (`/mnt/torbox-media`), user/group IDs, timezone, and hardware acceleration are auto-detected. Override via env vars: `TORBOX_MOUNT_DIR`, `TORBOX_HW_ACCEL`.
+> **Auto-detected values:** Mount directory (`/mnt/torbox-media`), user/group IDs, timezone, and hardware acceleration are auto-detected. Override via environment variables: `TORBOX_MOUNT_DIR`, `TORBOX_HW_ACCEL`.
 
 Then the script automatically:
 
@@ -175,6 +217,8 @@ Then the script automatically:
 >
 > **Re-running the script** is safe — it detects existing installations, preserves your API keys to avoid breaking integrations, and lets you keep your existing TorBox API key or enter a new one.
 
+---
+
 ## What the Script Configures Automatically
 
 The setup script pre-seeds and auto-configures as much as possible so you don't have to. Here's exactly what's handled for you:
@@ -186,218 +230,64 @@ The setup script pre-seeds and auto-configures as much as possible so you don't 
 | API keys | Random 32-char hex keys for Radarr, Sonarr, Prowlarr | Enables API auto-configuration on first launch |
 | Authentication | `DisabledForLocalAddresses` | Allows API calls to work without credentials on first launch |
 | Decypharr config | TorBox API key, WebDAV mount, rclone mount, symlink paths | Connects to your TorBox account and enables rclone FUSE mounting |
-| Systemd service | `torbox-media-server.service` | Auto-starts mount propagation + containers on boot |
+| Systemd service | `torbox-media-server.service` | Auto-starts mount propagation and containers on boot |
 
 ### Auto-Configured via API (after containers start)
 
-| Service | Setting | Value |
-|---------|---------|-------|
-| **Radarr** | Download client | Decypharr (as qBittorrent mock) on `decypharr:8282` |
-| **Radarr** | Root folder | `/data/media/movies` |
-| **Radarr** | Hardlinks | Disabled (required — debrid uses symlinks, not local files) |
-| **Radarr** | Movie renaming | Enabled: `{Movie CleanTitle} ({Release Year}) [{Quality Full}]` |
-| **Radarr** | Movie folder format | `{Movie CleanTitle} ({Release Year}) [imdbid-{ImdbId}]` |
-| **Radarr** | Colon replacement | Dash (`-`) for filesystem safety |
-| **Radarr** | Subtitle/extras import | Enabled (srt, sub, idx, ass, ssa, nfo) |
-| **Radarr** | Quality profiles | Upgrades enabled on all default profiles |
-| **Radarr** | Recycle bin | Disabled (no local storage to recycle) |
-| **Radarr** | Min free space on import | 100 MB |
-| **Sonarr** | Download client | Decypharr (as qBittorrent mock) on `decypharr:8282` |
-| **Sonarr** | Root folder | `/data/media/tv` |
-| **Sonarr** | Hardlinks | Disabled (required — debrid uses symlinks, not local files) |
-| **Sonarr** | Episode renaming | Enabled: `{Series TitleYear} - S{season:00}E{episode:00} - {Episode CleanTitle} [{Quality Full}]` |
-| **Sonarr** | Series folder format | `{Series TitleYear}` |
-| **Sonarr** | Season folder format | `Season {season:00}` |
-| **Sonarr** | Colon replacement | Smart replacement (mode 4) |
-| **Sonarr** | Subtitle/extras import | Enabled (srt, sub, idx, ass, ssa, nfo) |
-| **Sonarr** | Quality profiles | Upgrades enabled on all default profiles |
-| **Sonarr** | Recycle bin | Disabled (no local storage to recycle) |
-| **Sonarr** | Min free space on import | 100 MB |
-| **Prowlarr** | Byparr proxy | `http://byparr:8191` (Cloudflare bypass) |
-| **Prowlarr** | Radarr app | Connected with API key, full sync, movie categories |
-| **Prowlarr** | Sonarr app | Connected with API key, full sync, TV categories |
-| **Radarr** | Plex notification | Triggers instant Plex library scan on import/upgrade/delete (Plex only) |
-| **Sonarr** | Plex notification | Triggers instant Plex library scan on import/upgrade/delete (Plex only) |
-| **Prowlarr** | Default indexer | 1337x pre-added as a public torrent indexer |
-| **Seerr** | Radarr connection | Pre-configured with Radarr hostname, port, and API key |
-| **Seerr** | Sonarr connection | Pre-configured with Sonarr hostname, port, and API key |
-| **Seerr** | Plex/Jellyfin | Pre-configured with media server connection |
-| **Plex** | Libraries | Movies + TV Shows libraries auto-added (requires claim token) |
+| Service | What's configured |
+|---------|-------------------|
+| **Radarr** | Download client (Decypharr), root folder, media management settings, naming convention, quality profile upgrades, Plex notifications |
+| **Sonarr** | Download client (Decypharr), root folder, media management settings, naming convention, quality profile upgrades, Plex/Jellyfin notifications |
+| **Prowlarr** | Connected to Radarr + Sonarr, default indexer (1337x) added |
+| **Seerr** | Connected to Radarr, Sonarr, and your media server (Plex or Jellyfin) |
+| **Plex** | Libraries for Movies and TV Shows created (if claim token was provided) |
 
-### File Naming Examples
+> **Requires jq for API configuration.** If jq isn't available, the script skips the JSON-based auto-configuration steps. Run `./setup.sh` again after installing jq to complete configuration.
 
-Here's what your media library will look like on disk after the naming conventions are applied:
-
-**Movies (Radarr):**
-```
-/data/media/movies/
-├── Inception (2010) [imdbid-tt1375666]/
-│   └── Inception (2010) [Bluray-1080p].mkv
-├── The Dark Knight (2008) [imdbid-tt0468569]/
-│   ├── The Dark Knight (2008) [Bluray-2160p].mkv
-│   └── The Dark Knight (2008) [Bluray-2160p].srt
-└── Dune - Part Two (2024) [imdbid-tt15239678]/
-    └── Dune - Part Two (2024) [WEBDL-1080p Proper].mkv
-```
-
-**TV Shows (Sonarr):**
-```
-/data/media/tv/
-├── Breaking Bad (2008)/
-│   ├── Season 01/
-│   │   ├── Breaking Bad (2008) - S01E01 - Pilot [Bluray-1080p].mkv
-│   │   ├── Breaking Bad (2008) - S01E02 - Cat's in the Bag... [Bluray-1080p].mkv
-│   │   └── ...
-│   └── Season 02/
-│       └── ...
-└── The Last of Us (2023)/
-    └── Season 01/
-        ├── The Last of Us (2023) - S01E01 - When You're Lost in the Darkness [WEBDL-2160p].mkv
-        └── ...
-```
-
-Note that colons in titles (like "Mission: Impossible") are automatically replaced with dashes for filesystem compatibility.
+---
 
 ## Post-Install Walkthrough
 
-After the script finishes, only a few manual steps remain. Follow these in order.
+After setup, follow these steps to verify everything is working:
 
-> **Important — Docker Networking:**
-> When connecting services **to each other** (e.g., Seerr → Radarr), use the **container name** as the hostname (e.g., `radarr`, `sonarr`, `prowlarr`). When accessing services **in your browser**, use `http://localhost:PORT`. This is because containers talk to each other on an internal Docker network, not through your computer's localhost.
+### Step 1: Open Your Services (~1 minute)
 
----
+Once setup completes, open these URLs in your browser:
 
-### Step 1: Verify Decypharr (~2 minutes)
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Seerr | http://localhost:5055 | Main request interface |
+| Radarr | http://localhost:7878 | Movie manager |
+| Sonarr | http://localhost:8989 | TV show manager |
+| Prowlarr | http://localhost:9696 | Indexer manager |
+| Decypharr | http://localhost:8282 | TorBox bridge status |
+| Plex | http://localhost:32400/web | Media server (if chosen) |
+| Jellyfin | http://localhost:8096 | Media server (if chosen) |
 
-Decypharr is the critical bridge between your media managers and TorBox. **Nothing else works if Decypharr isn't set up correctly**, so do this first.
+### Step 2: Verify Services Are Running (~1 minute)
 
-1. Open **http://localhost:8282** in your browser
-2. Log in with the **pre-seeded credentials** shown at the end of setup (username: `torbox`, password: shown in the post-install output). You can also find them in the `.env` file: `grep DECYPHARR torbox-media-server/.env`
-3. Verify the pre-configured settings:
-   - **Debrid** tab: TorBox API key should be shown ✓, Rclone Folder set to `/mnt/remote/torbox/__all__` ✓, WebDAV enabled ✓
-   - **Rclone** tab: Mount should be **enabled** ✓, mount path `/mnt/remote` ✓
-   - All of the above are pre-configured by the setup script — just verify they look correct
-4. ⚠️ **Do not click Save** — Decypharr's config is mounted read-only (`:ro`) as a security measure. If you need to change settings, edit the config file on the host (`torbox-media-server/configs/decypharr/config.json`) and restart the container, or re-run `setup.sh`.
+Check that all containers are healthy:
+```bash
+cd torbox-media-server/
+./manage.sh status
+```
 
-**✅ What success looks like:** The Debrid tab shows your API key, WebDAV is enabled, and the Rclone tab shows the mount as active.
+All services should show as `running (healthy)`. If any show `starting`, wait another minute and check again.
 
----
+### Step 3: Complete Seerr Setup (~3 minutes)
 
-### Step 2: Set Up Prowlarr Indexers (~5 minutes)
+Seerr requires a brief one-time wizard:
 
-Prowlarr manages your torrent indexers (the sites where torrents are found). The script already connected Byparr, Radarr, and Sonarr — and pre-added **1337x** as a default indexer.
-
-1. Open **http://localhost:9696**
-2. Log in using the **auto-generated admin credentials** displayed at the end of the setup script.
-   > 💡 You can retrieve these credentials at any time by running `./manage.sh keys --show-secrets`
-
-3. **1337x is already configured** as a default indexer. To add more, go to **Indexers → Add Indexer** (the `+` button)
-4. Search for and add additional indexers you want. Some popular public options:
-   - **EZTV** — Specializes in TV shows
-   - **TorrentGalaxy** — General purpose
-   - **LimeTorrents** — Movies and TV shows
-   - **Nyaa** — Anime
-
-   For each indexer, just search its name, click it, and click **Save**. Most work with default settings.
-
-5. (Optional) Verify Radarr and Sonarr connections:
-   - Go to **Settings → Apps** — you should see Radarr and Sonarr already listed with green checkmarks
-
-**✅ What success looks like:** Indexers page shows 1337x and any additional sites with green status icons. Settings → Apps shows Radarr and Sonarr connected.
-
-> **Tip:** If an indexer is behind Cloudflare, the Byparr proxy handles it automatically — no extra configuration needed.
-
----
-
-### Step 3: Verify Radarr (~2 minutes)
-
-Radarr manages your movie library. The script already configured everything.
-
-1. Open **http://localhost:7878**
-2. Log in using the **auto-generated admin credentials**.
-3. Verify the auto-configuration worked:
-   - **Settings → Download Clients** → you should see **Decypharr** listed
-   - **Settings → Media Management** → Root Folders should show `/data/media/movies`
-   - **Settings → Media Management** → "Use Hardlinks instead of Copy" should be **OFF** ✓
-   - **Settings → Media Management** → "Import Extra Files" should be **ON** ✓
-   - **Settings → Media Management** → Movie Naming should be **ON** ✓
-   - **Settings → Profiles** → all profiles should have "Upgrades Allowed" checked ✓
-4. (Optional) Choose your preferred default quality profile:
-   - When you add movies later, you'll choose a quality profile. "HD-1080p" is a good default for most people.
-
-**✅ What success looks like:** No orange/red warnings on the System page. Download client shows a green icon. Root folder shows `/data/media/movies` with no errors.
-
----
-
-### Step 4: Verify Sonarr (~2 minutes)
-
-Sonarr manages your TV show library. Same auto-configuration as Radarr.
-
-1. Open **http://localhost:8989**
-2. Log in using the **auto-generated admin credentials**.
-3. Verify the auto-configuration worked:
-   - **Settings → Download Clients** → you should see **Decypharr** listed
-   - **Settings → Media Management** → Root Folders should show `/data/media/tv`
-   - **Settings → Media Management** → "Use Hardlinks instead of Copy" should be **OFF** ✓
-   - **Settings → Media Management** → "Import Extra Files" should be **ON** ✓
-   - **Settings → Media Management** → Episode Naming should be **ON** ✓
-   - **Settings → Profiles** → all profiles should have "Upgrades Allowed" checked ✓
-
-**✅ What success looks like:** Same as Radarr — no warnings, green icons on download client and root folder `/data/media/tv`.
-
----
-
-### Step 5: Set Up Your Media Server (~5 minutes)
-
-#### If you chose Plex:
-
-1. Open **http://localhost:32400/web**
-2. Sign in with your Plex account
-   - If you provided a claim token during setup, the server should already be claimed
-   - If not, you'll be prompted to claim it now
-3. Complete the initial setup wizard:
-   - Give your server a name
-   - **Libraries are auto-added** if you provided a claim token during setup — just verify they exist after the wizard
-4. If libraries are missing (e.g., no claim token was provided), add them manually:
-   - Go to **Settings → Libraries → Add Library**
-   - Click **Add Library** → **Movies** → Add folder → browse to `/data/media/movies` → **Add Library**
-   - Click **Add Library** → **TV Shows** → Add folder → browse to `/data/media/tv` → **Add Library**
-5. Recommended settings:
-   - **Settings → Library** → Disable "Scan my library automatically" (Decypharr handles file availability)
-   - Leave "Run a partial scan when changes are detected" enabled
-
-**✅ What success looks like:** Your Plex dashboard shows the Movies and TV Shows libraries (they'll be empty until you add content).
-
-#### If you chose Jellyfin:
-
-1. Open **http://localhost:8096**
-2. Complete the initial setup wizard:
-   - Choose your language
-   - Create an **admin account** (username and password)
-   - Add libraries when prompted:
-     - **Movies** → Content type: Movies → Add folder → enter `/data/media/movies`
-     - **TV Shows** → Content type: Shows → Add folder → enter `/data/media/tv`
-   - Configure metadata language (your preference)
-   - Finish the wizard
-
-**✅ What success looks like:** Your Jellyfin dashboard shows the Movies and TV Shows libraries (they'll be empty until you add content).
-
----
-
-### Step 6: Verify Seerr (~2 minutes)
-
-Seerr provides a beautiful frontend where you (and optionally your family/friends) can browse and request movies and TV shows. The setup script pre-configured Radarr, Sonarr, and your media server connection.
-
-1. Open **http://localhost:5055**
-2. Sign in:
-   - **Plex users:** Click "Sign In with Plex" and authorize with your Plex account, then select your Plex server from the list.
-     > The Plex server connection is pre-configured — when prompted for the URL, it should already show `http://plex:32400`.
-   - **Jellyfin users:** Click "Use Jellyfin" → enter your Jellyfin server URL as `http://jellyfin:8096` → sign in with your Jellyfin admin credentials
-     > The Jellyfin server connection is pre-configured — just sign in to complete the setup.
-3. Verify the pre-configured connections:
-   - **Settings → Radarr** — should show a connected Radarr server with a green checkmark
-   - **Settings → Sonarr** — should show a connected Sonarr server with a green checkmark
-4. Click **Finish Setup**
+1. Open **Seerr** (http://localhost:5055)
+2. Click **Get Started**
+3. Sign in with your **Plex account** (if using Plex) — or create a local admin account (if using Jellyfin)
+4. On the **Media Server** step:
+   - **Plex:** Click **Sync Libraries**, select Movies and TV Shows, click **Continue**
+   - **Jellyfin:** Enter `http://jellyfin:8096`, your admin credentials, sync libraries, continue
+5. On the **Services** step:
+   - Radarr should already be listed — click **Test**, then **Save**
+   - Sonarr should already be listed — click **Test**, then **Save**
+6. Click **Finish Setup**
 
 > **If Radarr/Sonarr aren't connected:** Re-run `./setup.sh` — it detects existing installations and re-configures. Or add them manually:
 > - **Radarr:** Hostname `radarr`, Port `7878`, API key from `./manage.sh keys`, Root Folder `/data/media/movies`
@@ -405,9 +295,7 @@ Seerr provides a beautiful frontend where you (and optionally your family/friend
 
 **✅ What success looks like:** Seerr's main page shows a search bar and "Discover" section with trending movies and shows.
 
----
-
-### Step 7: Test the Full Flow (~2 minutes)
+### Step 4: Test the Full Flow (~2 minutes)
 
 Everything is set up! Let's make sure it all works end-to-end.
 
@@ -425,9 +313,9 @@ Everything is set up! Let's make sure it all works end-to-end.
    - **Plex/Jellyfin** → Movies library
 6. Press **play** in Plex/Jellyfin — it should stream smoothly!
 
-> **Note:** The first request may take a moment as services warm up. If TorBox doesn't have the content cached (rare for popular titles), it may take a few minutes to download in the cloud. You'll see the progress in Radarr's Activity tab.
-
 🎉 **Congratulations!** Your personal streaming server is fully operational.
+
+---
 
 ## Management
 
@@ -451,8 +339,6 @@ cd torbox-media-server/
 ```
 
 > **Auto-start on boot:** The setup script installs a systemd service (`torbox-media-server`) that automatically handles mount propagation and starts all containers when your computer boots. You don't need to do anything — just turn on your computer and everything will be running.
->
-> Use `./manage.sh` for manual control when needed. The management script also re-applies mount propagation as a safety net.
 
 ## File Structure
 
@@ -478,6 +364,8 @@ torbox-media-server/
 The project root also contains:
 - `setup.sh` — Main installation and configuration script
 - `uninstall.sh` — Clean removal script (stop containers, remove configs, systemd service)
+
+---
 
 ## Accessing From Other Devices
 
@@ -507,13 +395,56 @@ For most users, your media server (Plex or Jellyfin) is already accessible on yo
 
 For remote access outside your home network, use a reverse proxy like [Caddy](https://caddyserver.com/), [Nginx Proxy Manager](https://nginxproxymanager.com/), or [Traefik](https://traefik.io/). This provides HTTPS, custom domain names, and proper security for internet-facing services.
 
+---
+
 ## Security Notes
 
 - **Ports are bound to `127.0.0.1`** by default, preventing LAN/WAN exposure of admin UIs, including Plex and Jellyfin
-- **Authentication is set to `Forms` with `Enabled`** automatically during setup. Secure admin credentials are auto-generated for Radarr, Sonarr, and Prowlarr, ensuring they are protected by default if you choose to expose them to your LAN.
+- **Authentication is set to `Forms` with `Enabled`** automatically during setup. Secure admin credentials are auto-generated for Radarr, Sonarr, and Prowlarr, ensuring they are protected by default if you choose to expose them to your LAN
 - **The `.env` file** contains your TorBox API key, admin credentials, and *arr API keys — it's `chmod 600` (owner-read only). Don't commit it to version control
 - **Only Decypharr** gets `SYS_ADMIN` capability and FUSE access — other containers only read files via symlinks
 - **Decypharr config is mounted read-only** — the config directory is bound as `:ro` to prevent containers from modifying their own configuration
+
+> ⚠️ **Never expose Radarr, Sonarr, Prowlarr, or Decypharr admin UIs to the public internet** without authentication and a reverse proxy with HTTPS. Seerr is designed for this purpose and has its own authentication system.
+
+---
+
+## Updating
+
+To update all services to their pinned versions:
+
+```bash
+cd torbox-media-server/
+./manage.sh update
+```
+
+This pulls the pinned Docker image versions and restarts all containers. Your configuration and data are preserved.
+
+> **Note:** Docker images are pinned to specific versions in `setup.sh` for reproducibility. To upgrade to newer versions, re-run `./setup.sh` which regenerates the Docker Compose file with updated image tags.
+
+---
+
+## Uninstalling
+
+Run the uninstall script from the project root:
+
+```bash
+chmod +x uninstall.sh
+./uninstall.sh
+```
+
+The script will:
+1. Stop and remove all Docker containers and the network
+2. Remove the systemd auto-start service
+3. Remove the installation directory (configs, data, docker-compose, .env)
+4. Unmount and remove the mount point
+5. Optionally remove Docker images to free ~5–8 GB of disk space
+
+You'll be asked to confirm before anything is removed. Your TorBox account and cloud-stored media are not affected.
+
+> **Note:** This does not uninstall Docker itself. To reclaim all Docker disk space (including unrelated images), run `docker system prune -a`.
+
+---
 
 ## Troubleshooting
 
@@ -594,11 +525,11 @@ Ports are bound to `127.0.0.1` by default. See [Accessing From Other Devices](#a
 
 ### "Seerr can't connect to Radarr/Sonarr"
 
-Make sure you're using **container names** (`radarr`, `sonarr`) as the hostname in Seerr, NOT `localhost`. See the Docker networking note at the top of the [Post-Install Walkthrough](#post-install-walkthrough).
+Make sure you're using **container names** (`radarr`, `sonarr`) as the hostname in Seerr, NOT `localhost`. All services communicate using Docker's internal network where each container is reachable by its service name.
 
 ### "Seerr can't find/connect to Plex"
 
-Plex and Seerr are on the same Docker bridge network (`media-network`), so use the container name:
+Plex and Seerr are on the same Docker bridge network. Use the internal container URL:
 ```
 http://plex:32400
 ```
@@ -626,18 +557,20 @@ This usually means Radarr or Sonarr hasn't finished starting yet. Wait a minute 
 3. Click **Test** — if it fails, verify the URL and API key are correct
 4. The internal URLs should be `http://radarr:7878` and `http://sonarr:8989`
 
+---
+
 ## Design Decisions
 
 - **Seerr** instead of Overseerr — Overseerr was archived in 2024; Seerr is the merged successor supporting Plex, Jellyfin, and Emby
 - **Byparr** instead of FlareSolverr — FlareSolverr is currently non-functional (Cloudflare detects it); Byparr is a drop-in replacement using the same API
 - **Only Decypharr gets FUSE/SYS_ADMIN** — Plex/Jellyfin/Radarr/Sonarr only read files, they don't need elevated privileges
-- **Plex on bridge networking** — Plex runs on the same Docker bridge network as all other services, allowing Seerr to connect via container name (`http://plex:32400`). Host networking was avoided because many Linux firewalls (UFW, firewalld) block traffic from Docker bridge containers to the host, causing Seerr <-> Plex connectivity failures
+- **Plex on bridge networking** — Plex runs on the same Docker bridge network as all other services, allowing Seerr to connect via container name (`http://plex:32400`). Host networking was avoided because many Linux firewalls (UFW, firewalld) block traffic from Docker bridge containers to the host, causing Seerr ↔ Plex connectivity failures
 - **Plex notifications on Radarr/Sonarr** — triggers an instant Plex library scan when content is imported, upgraded, or deleted, so new media appears in seconds instead of waiting for Plex's periodic scan interval
 - **Ports bound to localhost** — prevents accidental LAN/WAN exposure of admin UIs, including Plex and Jellyfin
 - **Mount propagation** — uses `rshared` on Decypharr (the mount source) and `rslave` on media servers (consumers); a systemd service (`torbox-media-server`) handles this automatically on boot, and `manage.sh` re-applies it as a safety net
 - **Hardlinks disabled** — debrid setups use symlinks from Decypharr's WebDAV mount, not local files; hardlinks would fail
 - **Systemd auto-start** — a `torbox-media-server.service` unit handles mount propagation and container startup on boot, so users never have to manually start services after a reboot
-- **Auto-configured Auth** — the setup script uses `DisabledForLocalAddresses` initially to configure services via API, then securely locks them down to `Forms` (`Enabled`) with auto-generated credentials before finishing.
+- **Auto-configured Auth** — the setup script uses `DisabledForLocalAddresses` initially to configure services via API, then securely locks them down to `Forms` (`Enabled`) with auto-generated credentials before finishing
 - **Pre-seeded API keys** — generated during setup and injected into config.xml before containers start, enabling fully automated API-based configuration
 - **jq for JSON manipulation** — used to modify *arr config via API; auto-installed as a dependency
 - **Quality profile upgrades enabled** — without this, Radarr/Sonarr won't replace a 720p version with a 1080p one; most users want automatic upgrades
@@ -645,45 +578,14 @@ This usually means Radarr or Sonarr hasn't finished starting yet. Wait a minute 
 - **Decypharr config mounted read-only** — config.json is bind-mounted as `:ro` to prevent containers from accidentally modifying it
 - **Decypharr credentials pre-seeded** — generated during setup and injected into config.json, eliminating manual credential creation
 
-## Updating
-
-To update all services to their pinned versions:
-
-```bash
-cd torbox-media-server/
-./manage.sh update
-```
-
-This pulls the pinned Docker image versions and restarts all containers. Your configuration and data are preserved.
-
-> **Note:** Docker images are pinned to specific versions in `setup.sh` for reproducibility. To upgrade to newer versions, re-run `./setup.sh` which regenerates the Docker Compose file with updated image tags.
-
-## Uninstalling
-
-Run the uninstall script from the project root:
-
-```bash
-chmod +x uninstall.sh
-./uninstall.sh
-```
-
-The script will:
-1. Stop and remove all Docker containers and the network
-2. Remove the systemd auto-start service
-3. Remove the installation directory (configs, data, docker-compose, .env)
-4. Unmount and remove the mount point
-5. Optionally remove Docker images to free ~5–8 GB of disk space
-
-You'll be asked to confirm before anything is removed. Your TorBox account and cloud-stored media are not affected.
-
-> **Note:** This does not uninstall Docker itself. To reclaim all Docker disk space (including unrelated images), run `docker system prune -a`.
+---
 
 ## Glossary
 
 New to this? Here's what the key terms mean:
 
 | Term | Meaning |
-|------|---------|
+|------|----------|
 | **Debrid** | A cloud downloading service (like TorBox) that downloads torrents for you in the cloud. You stream the files instead of downloading them locally. |
 | **Indexer** | A torrent search site (like 1337x). Prowlarr manages your indexers and searches them when Radarr/Sonarr need content. |
 | **Quality Profile** | A set of rules for what video quality to accept (e.g., "only 1080p or higher"). Used by Radarr/Sonarr when choosing which torrent to grab. |
@@ -696,7 +598,16 @@ New to this? Here's what the key terms mean:
 | **rclone** | A tool that mounts cloud storage (like TorBox's WebDAV) as a local filesystem. Built into Decypharr. |
 | **Claim Token** | A one-time code from Plex that links a new Plex server to your Plex account. Expires after 4 minutes. |
 | **API Key** | A secret password that services use to talk to each other. The setup script generates these automatically. |
+| ***arr suite** | Collective name for the automation apps built around the Servarr project: Radarr, Sonarr, Prowlarr, etc. |
+
+---
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on submitting issues, bug reports, and pull requests.
+
+---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
