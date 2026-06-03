@@ -18,7 +18,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -sSL "https://github.com/mvdan/sh/releases/download/v3.8.0/shfmt_v3.8.0_linux_amd64" -o /tmp/shfmt
-          echo "e31e40df3e9ff0a35c52eaf23ff52459e5b0fcc9e8f219354f95243aeea0d94d  /tmp/shfmt" | sha256sum -c - || { echo "shfmt checksum mismatch — update the fixed checksum"; exit 1; }
+          echo "27b3c6f9d9592fc5b4856c341d1ff2c88856709b9e76469313642a1d7b558fe0  /tmp/shfmt" | sha256sum -c - || { echo "shfmt checksum mismatch — update the fixed checksum"; exit 1; }
           sudo install -m 755 /tmp/shfmt /usr/local/bin/shfmt
           shfmt --version
 
