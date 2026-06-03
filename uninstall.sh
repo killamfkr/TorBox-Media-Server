@@ -88,6 +88,23 @@ if [[ "$NON_INTERACTIVE" != "true" ]]; then
     fi
 fi
 
+# Offer to create backup before deletion
+if [[ "$NON_INTERACTIVE" != "true" ]]; then
+    read -rp "Do you want to create a backup of your configuration before uninstalling? [Y/n]: " create_backup
+    if [[ "${create_backup,,}" != "n" ]]; then
+        if [[ -f "${INSTALL_DIR}/manage.sh" ]]; then
+            log_info "Creating configuration backup..."
+            if bash "${INSTALL_DIR}/manage.sh" backup; then
+                log_info "Backup created successfully."
+            else
+                log_warn "Backup failed. Proceeding with uninstall."
+            fi
+        else
+            log_warn "manage.sh not found. Skipping backup."
+        fi
+    fi
+fi
+
 echo ""
 
 # Step 1: Stop and remove containers
@@ -158,8 +175,13 @@ fi
 
 # Step 5: Remove installation directory
 log_info "Removing installation directory..."
-rm -rf "${INSTALL_DIR}"
-log_info "Removed: ${INSTALL_DIR}"
+if [[ "${INSTALL_DIR}" == *"/torbox-media-server" ]]; then
+    rm -rf "${INSTALL_DIR}"
+    log_info "Removed: ${INSTALL_DIR}"
+else
+    log_error "Installation directory path is invalid: ${INSTALL_DIR}"
+    exit 1
+fi
 
 # Step 6: Optionally remove Docker images
 echo ""

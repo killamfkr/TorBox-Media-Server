@@ -57,12 +57,34 @@ jobs:
 
       - name: Extract and validate manage.sh
         run: |
-          # Extract the heredoc content that generates manage.sh from setup.sh
-          # Strip the first and last lines of each heredoc block (cat/EOF wrappers)
-          # so bash -n checks the actual script content, not the heredoc container.
-          sed -n '/^cat > "${INSTALL_DIR}\/manage.sh" << .MANAGE_EOF.$/,/^MANAGE_EOF$/p' setup.sh | sed '1d;$d' > /tmp/manage_extracted.sh
-          sed -n '/^cat >> "${INSTALL_DIR}\/manage.sh" << .MANAGE_INLINE.$/,/^MANAGE_INLINE$/p' setup.sh | sed '1d;$d' >> /tmp/manage_extracted.sh
-          bash -n /tmp/manage_extracted.sh && echo "manage.sh syntax OK" || { echo "manage.sh has syntax errors"; exit 1; }
+          # Extract the heredoc content that generates manage.sh from setup.sh.
+          # Track heredoc delimiters per opening `cat ... manage.sh <<'TAG'` line so
+          # that nested heredocs (or same-named delimiters in a single file) are
+          # captured correctly. Strip the cat/EOF wrapper lines from the output.
+          awk '
+            /^cat >+"\${INSTALL_DIR}\/manage.sh" <</ {
+              match($0, /<<'\''(MANAGE_[A-Z_]+)'\''$/, m)
+              tag = m[1]
+              print "### " NR ": " $0
+              capturing = 1
+              next
+            }
+            capturing && $0 == tag {
+              print "### " NR ": " $0
+              capturing = 0
+              tag = ""
+              next
+            }
+            capturing { print }
+          ' setup.sh > /tmp/manage_extracted.sh
+          if [[ ! -s /tmp/manage_extracted.sh ]]; then
+            echo "::error::manage.sh extraction failed: no content captured from setup.sh heredocs"
+            exit 1
+          fi
+          bash -n /tmp/manage_extracted.sh && echo "manage.sh syntax OK" || {
+            echo "::error::manage.sh has syntax errors"
+            exit 1
+          }
 
       - name: Validate uninstall.sh syntax
         run: bash -n uninstall.sh && echo "uninstall.sh syntax OK"

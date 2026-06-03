@@ -40,7 +40,7 @@ services:
     cap_add:
       - SYS_ADMIN
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8282"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8282 || wget -qO- http://localhost:8282 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -53,6 +53,10 @@ services:
     security_opt:
       # Harmless on systems without AppArmor (e.g. CachyOS)
       - apparmor:unconfined
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   # ── Prowlarr ───────────────────────────────────────────────────
   # Indexer manager - feeds search results to Radarr & Sonarr.
@@ -84,6 +88,10 @@ services:
       start_period: 30s
     volumes:
       - "${CONFIG_DIR}/prowlarr:/config"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   # ── Byparr ────────────────────────────────────────────────────
   # Cloudflare bypass proxy (Byparr - drop-in FlareSolverr replacement).
@@ -110,6 +118,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   # ── Radarr ─────────────────────────────────────────────────────
   # Movie management - searches, grabs, and organizes movies.
@@ -144,6 +156,10 @@ services:
       - "${CONFIG_DIR}/radarr:/config"
       - "${DATA_DIR}:/data"
       - "${MOUNT_DIR}:/mnt/remote:rslave"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   # ── Sonarr ─────────────────────────────────────────────────────
   # TV show management - searches, grabs, and organizes series.
@@ -178,6 +194,10 @@ services:
       - "${CONFIG_DIR}/sonarr:/config"
       - "${DATA_DIR}:/data"
       - "${MOUNT_DIR}:/mnt/remote:rslave"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   # ── Seerr ───────────────────────────────────────────────────────
   # Media request & discovery frontend.
@@ -210,6 +230,10 @@ services:
       start_period: 60s
     volumes:
       - "${CONFIG_DIR}/seerr:/app/config"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   # ── Plex ───────────────────────────────────────────────────────
   # Media server option 1 - streams your library to any device.
@@ -244,6 +268,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 4g
 
   # ── Jellyfin ───────────────────────────────────────────────────
   # Media server option 2 (open-source) - streams your library.
@@ -281,3 +309,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 4g

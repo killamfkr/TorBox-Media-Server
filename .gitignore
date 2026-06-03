@@ -2,6 +2,9 @@
 .env
 .env.local
 .env.*
+!.env.example
+docker-compose.override.yml
+docker-compose.override.yaml
 
 # Logs and temp files
 *.log

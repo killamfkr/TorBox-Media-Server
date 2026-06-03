@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -o errtrace
+trap 'echo -e "\n\033[0;31m[ERROR] Unexpected error at line $LINENO in command: $BASH_COMMAND\033[0m"' ERR
 
 # ============================================================================
 #  TorBox Media Server - All-in-One Setup Script
@@ -14,6 +16,8 @@ set -euo pipefail
 VERSION="1.0.0"
 DRY_RUN=false
 SERVICES_STARTED=false
+NON_INTERACTIVE=false
+SPINNER_PID=""
 
 # Tracks any temp file created by run_with_spinner so the interrupt handler can clean it up.
 SPINNER_TMPFILE=""
@@ -22,19 +26,23 @@ trap 'cleanup_on_interrupt' INT TERM
 
 cleanup_on_interrupt() {
     echo ""
+    # Kill any background process started by run_with_spinner
+    if [[ -n "${SPINNER_PID:-}" ]]; then
+        kill -9 "${SPINNER_PID}" 2>/dev/null || true
+    fi
     # Remove any leftover spinner temp file from an in-flight background command
     if [[ -n "${SPINNER_TMPFILE:-}" && -e "${SPINNER_TMPFILE}" ]]; then
         rm -f "${SPINNER_TMPFILE}"
     fi
     # If setup never completed (.env not written), remove partial installation
-    if [[ ! -f "${ENV_FILE}" && -d "${INSTALL_DIR}" ]]; then
+    if [[ ! -f "${ENV_FILE:-}" && -d "${INSTALL_DIR:-}" ]]; then
         log_warn "Setup interrupted before completion. Cleaning up partial installation..."
-        rm -rf "${INSTALL_DIR}"
+        rm -rf "${INSTALL_DIR:-}"
         log_info "Partial installation removed. Re-run setup.sh to start fresh."
-    elif [[ -f "${ENV_FILE}" && ! -f "${SETUP_COMPLETE_FILE}" ]]; then
+    elif [[ -f "${ENV_FILE:-}" && ! -f "${SETUP_COMPLETE_FILE:-}" ]]; then
         # .env exists but setup_complete doesn't — install was interrupted mid-config
         log_warn "Setup interrupted during configuration. Cleaning up incomplete installation..."
-        rm -rf "${INSTALL_DIR}"
+        rm -rf "${INSTALL_DIR:-}"
         log_info "Incomplete installation removed. Re-run setup.sh to start fresh."
     else
         log_warn "Setup interrupted. Re-run to continue where you left off."
@@ -76,6 +84,17 @@ generate_api_key() {
         return 1
     fi
     echo "$key"
+}
+
+# Generate secure random admin passwords
+_gen_admin_pass() {
+    local p=""
+    if p=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' | head -c 16); then
+        :
+    elif p=$(head -c 16 /dev/urandom 2>/dev/null | base64 | tr -d '/+=' | head -c 16); then
+        :
+    fi
+    echo "$p"
 }
 
 # Colors
@@ -143,10 +162,11 @@ run_with_spinner() {
     shift
     local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
     local tmpfile
-    tmpfile=$(mktemp)
+    tmpfile=$(mktemp /tmp/torbox-setup.XXXXXX)
     SPINNER_TMPFILE="$tmpfile" # exposed to cleanup_on_interrupt trap
     "$@" >"$tmpfile" 2>&1 &
     local pid=$! i=0
+    SPINNER_PID="$pid"
     while kill -0 "$pid" 2>/dev/null; do
         printf "\r  %s %s" "${spin_chars:i%${#spin_chars}:1}" "$msg"
         i=$((i + 1))
@@ -158,6 +178,7 @@ run_with_spinner() {
     if [[ $rc -ne 0 ]]; then cat "$tmpfile" >&2; fi
     rm -f "$tmpfile"
     SPINNER_TMPFILE=""
+    SPINNER_PID=""
     return "$rc"
 }
 
@@ -182,7 +203,7 @@ compose_cmd() {
         detect_compose_cmd
     fi
     # CD into directory so Docker auto-discovers both docker-compose.yml and docker-compose.override.yml
-    (cd "${INSTALL_DIR}" && "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "$@")
+    (cd "${INSTALL_DIR}" && exec "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "$@")
 }
 
 # ============================================================================
@@ -302,8 +323,8 @@ check_port_conflicts() {
         ports_to_check+=(32400)
         port_names+=("Plex")
     elif [[ "${MEDIA_SERVER:-}" == "jellyfin" ]]; then
-        ports_to_check+=(8096 8920)
-        port_names+=("Jellyfin" "Jellyfin HTTPS")
+        ports_to_check+=(8096)
+        port_names+=("Jellyfin")
     fi
     local conflicts=false
     local network_stats=""
@@ -316,7 +337,7 @@ check_port_conflicts() {
     for i in "${!ports_to_check[@]}"; do
         local port_in_use=false
         # Use explicit word-boundary match to avoid partial port matches (e.g., 828 matching 8282)
-        if echo "$network_stats" | grep -qE ":${ports_to_check[$i]}[[:space:]]"; then
+        if echo "$network_stats" | grep -qE ":${ports_to_check[$i]}($|[[:space:]])"; then
             port_in_use=true
         fi
         if [[ "$port_in_use" == "true" ]]; then
@@ -646,41 +667,40 @@ gather_config() {
     fi
 
     # Generate or preserve admin credentials for the *arr services
+    # Radarr
     if [[ -n "${EXISTING_RADARR_ADMIN_USER:-}" && -n "${EXISTING_RADARR_ADMIN_PASS:-}" ]]; then
         RADARR_ADMIN_USER="$EXISTING_RADARR_ADMIN_USER"
         RADARR_ADMIN_PASS="$EXISTING_RADARR_ADMIN_PASS"
-        SONARR_ADMIN_USER="$EXISTING_SONARR_ADMIN_USER"
-        SONARR_ADMIN_PASS="$EXISTING_SONARR_ADMIN_PASS"
-        PROWLARR_ADMIN_USER="$EXISTING_PROWLARR_ADMIN_USER"
-        PROWLARR_ADMIN_PASS="$EXISTING_PROWLARR_ADMIN_PASS"
-        log_info "Preserved existing admin credentials from previous installation."
     else
         RADARR_ADMIN_USER="admin"
-        SONARR_ADMIN_USER="admin"
-        PROWLARR_ADMIN_USER="admin"
-
-        # Generate an INDEPENDENT secure random password for each service,
-        # so a leak of one credential cannot compromise the others.
-        _gen_admin_pass() {
-            local p
-            p="$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' | head -c 16)"
-            if [[ -z "$p" ]]; then
-                p="$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 16)"
-            fi
-            echo "$p"
-        }
         RADARR_ADMIN_PASS="$(_gen_admin_pass)"
-        SONARR_ADMIN_PASS="$(_gen_admin_pass)"
-        PROWLARR_ADMIN_PASS="$(_gen_admin_pass)"
-
-        # Validate passwords are non-empty and unique
-        for key_name in RADARR_ADMIN_PASS SONARR_ADMIN_PASS PROWLARR_ADMIN_PASS; do
-            if [[ -z "${!key_name}" ]]; then
-                log_error "Failed to generate admin password for ${key_name}. Ensure openssl or /dev/urandom is available."
-                exit 1
-            fi
-        done
     fi
+
+    # Sonarr
+    if [[ -n "${EXISTING_SONARR_ADMIN_USER:-}" && -n "${EXISTING_SONARR_ADMIN_PASS:-}" ]]; then
+        SONARR_ADMIN_USER="$EXISTING_SONARR_ADMIN_USER"
+        SONARR_ADMIN_PASS="$EXISTING_SONARR_ADMIN_PASS"
+    else
+        SONARR_ADMIN_USER="admin"
+        SONARR_ADMIN_PASS="$(_gen_admin_pass)"
+    fi
+
+    # Prowlarr
+    if [[ -n "${EXISTING_PROWLARR_ADMIN_USER:-}" && -n "${EXISTING_PROWLARR_ADMIN_PASS:-}" ]]; then
+        PROWLARR_ADMIN_USER="$EXISTING_PROWLARR_ADMIN_USER"
+        PROWLARR_ADMIN_PASS="$EXISTING_PROWLARR_ADMIN_PASS"
+    else
+        PROWLARR_ADMIN_USER="admin"
+        PROWLARR_ADMIN_PASS="$(_gen_admin_pass)"
+    fi
+
+    # Validate passwords are non-empty
+    for key_name in RADARR_ADMIN_PASS SONARR_ADMIN_PASS PROWLARR_ADMIN_PASS; do
+        if [[ -z "${!key_name}" ]]; then
+            log_error "Failed to generate admin password for ${key_name}. Ensure openssl or /dev/urandom is available."
+            exit 1
+        fi
+    done
 
     echo ""
 
@@ -820,7 +840,7 @@ gather_config() {
     # Verify nvidia-container-toolkit is installed if NVIDIA is selected
     if [[ "${HW_ACCEL}" == "nvidia" ]]; then
         if ! command -v nvidia-container-runtime &>/dev/null &&
-            ! dpkg -l nvidia-container-toolkit &>/dev/null &&
+            ! dpkg -s nvidia-container-toolkit &>/dev/null &&
             ! rpm -q nvidia-container-toolkit &>/dev/null &&
             ! pacman -Qi nvidia-container-toolkit &>/dev/null; then
             log_error "NVIDIA GPU detected but nvidia-container-toolkit is not installed."
@@ -1291,7 +1311,7 @@ compose_cmd() {
         detect_compose_cmd
     fi
     # CD into directory so Docker auto-discovers both docker-compose.yml and docker-compose.override.yml
-    (cd "${SCRIPT_DIR}" && "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "$@")
+    (cd "${SCRIPT_DIR}" && exec "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "$@")
 }
 MANAGE_INLINE
 
@@ -1302,8 +1322,9 @@ ensure_mount_propagation() {
     mount_dir="$(env_val MOUNT_DIR)"
     if [[ -n "${mount_dir}" ]]; then
         echo -e "${YELLOW}Requesting sudo privileges to re-apply FUSE mounts...${NC}"
-        # Guard with findmnt to prevent mount stacking
-        sudo bash -c "findmnt -n '${mount_dir}' >/dev/null 2>&1 || mount --bind '${mount_dir}' '${mount_dir}'" 2>/dev/null || true
+        # Guard with findmnt to prevent mount stacking. Pass mount_dir as a positional
+        # argument to a sudo bash -c so the path is never interpolated into shell code.
+        sudo bash -c 'findmnt -n "$1" >/dev/null 2>&1 || mount --bind "$1" "$1"' _ "${mount_dir}" 2>/dev/null || true
         sudo mount --make-shared "${mount_dir}" 2>/dev/null || true
     fi
 }
@@ -1350,6 +1371,49 @@ show_urls() {
     fi
     echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
+cmd_keys() {
+    local show_secrets=false
+    local _radarr_pass _sonarr_pass _prowlarr_pass
+    if [[ "\$2" == "--show-secrets" ]]; then
+        show_secrets=true
+    fi
+
+    mask_val() {
+        local val="\$1"
+        if [[ "\$show_secrets" == "true" ]]; then
+            echo "\$val"
+        elif [[ \${#val} -gt 8 ]]; then
+            echo "\${val:0:4}...<hidden>...\${val: -4}"
+        else
+            echo "***<hidden>***"
+        fi
+    }
+
+    echo -e "\n${CYAN}━━━━ API Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    if [[ "\$show_secrets" == "true" ]]; then
+        echo -e "  ${YELLOW}WARNING: Sensitive credentials below. Do not share this output.${NC}\n"
+    else
+        echo -e "  ${YELLOW}Secrets masked. Use './manage.sh keys --show-secrets' to reveal.${NC}\n"
+    fi
+
+    echo -e "  ${BOLD}TorBox${NC}    \$(mask_val \"\$(env_val TORBOX_API_KEY)\")"
+    echo -e "  ${BOLD}Radarr${NC}    \$(mask_val \"\$(env_val RADARR_API_KEY)\")"
+    echo -e "  ${BOLD}Sonarr${NC}    \$(mask_val \"\$(env_val SONARR_API_KEY)\")"
+    echo -e "  ${BOLD}Prowlarr${NC}  \$(mask_val \"\$(env_val PROWLARR_API_KEY)\")"
+
+    _radarr_pass="\$(env_val RADARR_ADMIN_PASS)"
+    _sonarr_pass="\$(env_val SONARR_ADMIN_PASS)"
+    _prowlarr_pass="\$(env_val PROWLARR_ADMIN_PASS)"
+    if [[ -n "\$_radarr_pass" ]]; then
+        echo ""
+        echo -e "  ${BOLD}Admin Credentials:${NC}"
+        echo -e "  ${BOLD}Radarr${NC}    user: \$(env_val RADARR_ADMIN_USER)  pass: \$(mask_val \"\${_radarr_pass}\")"
+        echo -e "  ${BOLD}Sonarr${NC}    user: \$(env_val SONARR_ADMIN_USER)  pass: \$(mask_val \"\${_sonarr_pass}\")"
+        echo -e "  ${BOLD}Prowlarr${NC}  user: \$(env_val PROWLARR_ADMIN_USER)  pass: \$(mask_val \"\${_prowlarr_pass}\")"
+    fi
+    echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+}
+
 
 case "${1:-help}" in
     start)
@@ -1398,46 +1462,7 @@ case "${1:-help}" in
         show_urls
         ;;
     keys)
-        local show_secrets=false
-        if [[ "\$2" == "--show-secrets" ]]; then
-            show_secrets=true
-        fi
-
-        mask_val() {
-            local val="\$1"
-            if [[ "\$show_secrets" == "true" ]]; then
-                echo "\$val"
-            elif [[ \${#val} -gt 8 ]]; then
-                echo "\${val:0:4}...<hidden>...\${val: -4}"
-            else
-                echo "***<hidden>***"
-            fi
-        }
-
-        echo -e "\n${CYAN}━━━━ API Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-        if [[ "\$show_secrets" == "true" ]]; then
-            echo -e "  ${YELLOW}WARNING: Sensitive credentials below. Do not share this output.${NC}\n"
-        else
-            echo -e "  ${YELLOW}Secrets masked. Use './manage.sh keys --show-secrets' to reveal.${NC}\n"
-        fi
-
-        echo -e "  ${BOLD}TorBox${NC}    \$(mask_val \"\$(env_val TORBOX_API_KEY)\")"
-        echo -e "  ${BOLD}Radarr${NC}    \$(mask_val \"\$(env_val RADARR_API_KEY)\")"
-        echo -e "  ${BOLD}Sonarr${NC}    \$(mask_val \"\$(env_val SONARR_API_KEY)\")"
-        echo -e "  ${BOLD}Prowlarr${NC}  \$(mask_val \"\$(env_val PROWLARR_API_KEY)\")"
-
-        local _radarr_pass _sonarr_pass _prowlarr_pass
-        _radarr_pass="\$(env_val RADARR_ADMIN_PASS)"
-        _sonarr_pass="\$(env_val SONARR_ADMIN_PASS)"
-        _prowlarr_pass="\$(env_val PROWLARR_ADMIN_PASS)"
-        if [[ -n "\$_radarr_pass" ]]; then
-            echo ""
-            echo -e "  ${BOLD}Admin Credentials:${NC}"
-            echo -e "  ${BOLD}Radarr${NC}    user: \$(env_val RADARR_ADMIN_USER)  pass: \$(mask_val \"\${_radarr_pass}\")"
-            echo -e "  ${BOLD}Sonarr${NC}    user: \$(env_val SONARR_ADMIN_USER)  pass: \$(mask_val \"\${_sonarr_pass}\")"
-            echo -e "  ${BOLD}Prowlarr${NC}  user: \$(env_val PROWLARR_ADMIN_USER)  pass: \$(mask_val \"\${_prowlarr_pass}\")"
-        fi
-        echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+        cmd_keys "$@"
         ;;
     enable)
         if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
@@ -1461,7 +1486,7 @@ case "${1:-help}" in
         fi
         ;;
     backup)
-        backup_dir="${SCRIPT_DIR}/backups/$(date +%Y%m%d_%H%M%S)"
+        backup_dir="$(dirname "${SCRIPT_DIR}")/backups/$(date +%Y%m%d_%H%M%S)"
         mkdir -p "${backup_dir}"
         chmod 700 "${backup_dir}"
         cp -a "${ENV_FILE}" "${backup_dir}/" 2>/dev/null || true
@@ -1470,7 +1495,7 @@ case "${1:-help}" in
         echo -e "${GREEN}Backup saved to: ${backup_dir}${NC}"
         ;;
     restore)
-        backups_dir="${SCRIPT_DIR}/backups"
+        backups_dir="$(dirname "${SCRIPT_DIR}")/backups"
         if [[ ! -d "${backups_dir}" ]]; then
             echo -e "${RED}No backups found. Run 'backup' first to create one.${NC}"
             exit 1
@@ -1598,8 +1623,8 @@ Type=simple
 
 # Step 1: Set up FUSE mount propagation (required for rclone WebDAV in Decypharr)
 # Guard with findmnt to prevent mount stacking on repeated restarts
-ExecStartPre=/bin/bash -c 'findmnt -n "${MOUNT_DIR}" >/dev/null 2>&1 || mount --bind "${MOUNT_DIR}" "${MOUNT_DIR}"'
-ExecStartPre=/bin/bash -c 'mount --make-shared "${MOUNT_DIR}"'
+ExecStartPre=/bin/bash -c "findmnt -n '${MOUNT_DIR}' >/dev/null 2>&1 || mount --bind '${MOUNT_DIR}' '${MOUNT_DIR}'"
+ExecStartPre=/bin/bash -c "mount --make-shared '${MOUNT_DIR}'"
 
 # Step 2: Start all containers (foreground so systemd tracks the process)
 ExecStart=${docker_bin} ${compose_args} --env-file "${ENV_FILE}" up --remove-orphans
@@ -1608,7 +1633,7 @@ ExecStart=${docker_bin} ${compose_args} --env-file "${ENV_FILE}" up --remove-orp
 ExecStop=${docker_bin} ${compose_args} --env-file "${ENV_FILE}" stop
 
 # Clean up bind mount left by FUSE propagation
-ExecStopPost=-/bin/bash -c 'umount -l "${MOUNT_DIR}" || true'
+ExecStopPost=-/bin/bash -c "umount -l '${MOUNT_DIR}' || true"
 
 Restart=on-failure
 RestartSec=10
@@ -1738,24 +1763,25 @@ DCJSON_EOF
                 fi
                 curl -sf --connect-timeout 5 --max-time 15 -X POST -H "Content-Type: application/json" -H "X-Api-Key: ${api_key}" \
                     "${url}/api/v3/notification" \
-                    -d '{
+                    -d @- <<EOF -o /dev/null && log_info "  Plex notification added to ${name} (instant library updates)." || log_warn "  Failed to add Plex notification to ${name}."
+                    {
                         "name": "Plex",
                         "implementation": "PlexServer",
                         "configContract": "PlexServerSettings",
-                        "'"$on_download_field"'": true,
-                        "'"$on_upgrade_field"'": true,
-                        "'"$on_rename_field"'": true,
-                        "'"$on_delete_field"'": true,
-                        "'"$on_delete_upgrade_field"'": true,
+                        "${on_download_field}": true,
+                        "${on_upgrade_field}": true,
+                        "${on_rename_field}": true,
+                        "${on_delete_field}": true,
+                        "${on_delete_upgrade_field}": true,
                         "fields": [
                             {"name": "host", "value": "plex"},
                             {"name": "port", "value": 32400},
                             {"name": "useSsl", "value": false},
-                            {"name": "authToken", "value": "'"$plex_token"'"},
+                            {"name": "authToken", "value": "${plex_token}"},
                             {"name": "updateLibrary", "value": true}
                         ]
-                    }' -o /dev/null && log_info "  Plex notification added to ${name} (instant library updates)." ||
-                    log_warn "  Failed to add Plex notification to ${name}."
+                    }
+EOF
             else
                 log_warn "  Plex token not found — skipping Plex notification for ${name}. You can add it manually in ${name} → Settings → Connect."
             fi
@@ -1805,9 +1831,9 @@ configure_quality_profiles() {
     [[ -z "$updated_profiles" || "$updated_profiles" == "[]" ]] && return 1
 
     local ok=0
-    local profile_ids
-    profile_ids=$(echo "$updated_profiles" | jq -r '.[].id' 2>/dev/null) || true
-    for pid in $profile_ids; do
+    local profile_ids=()
+    mapfile -t profile_ids < <(echo "$updated_profiles" | jq -r '.[].id' 2>/dev/null)
+    for pid in "${profile_ids[@]}"; do
         local profile_data
         profile_data=$(echo "$updated_profiles" | jq --argjson id "$pid" '.[] | select(.id == $id)' 2>/dev/null) || true
         if curl -sf --connect-timeout 5 --max-time 15 -X PUT \
@@ -1832,10 +1858,12 @@ wait_for_service() {
             log_info "${name} is ready. (${elapsed}s)"
             return 0
         fi
-        printf "\r  %s Waiting for %s... %ds/%ds" "${spin_chars:elapsed/interval%${#spin_chars}:1}" "$name" "$elapsed" "$max_wait"
-        sleep "$interval"
+        local i=0
+        for ((i=0; i<interval; i++)); do
+            printf "\r  %s Waiting for %s... %ds/%ds" "${spin_chars:(elapsed + i)%${#spin_chars}:1}" "$name" "$((elapsed + i))" "$max_wait"
+            sleep 1
+        done
         elapsed=$((elapsed + interval))
-        [[ $interval -lt 5 ]] && interval=$((interval + 1))
     done
     printf "\r  %-50s\n" ""
     log_warn "${name} did not become ready within ${max_wait}s. Skipping auto-config."
@@ -1979,7 +2007,7 @@ configure_arrs() {
         configure_arr_auth "Sonarr" "$sonarr_url" "$SONARR_API_KEY" || _failed=$((_failed + 1))
     fi
     if [[ "$prowlarr_ready" == "true" ]]; then
-        configure_arr_auth "Prowlarr" "$prowlarr_url" "$PROWLARR_API_KEY" || _failed=$((_failed + 1))
+        configure_arr_auth "Prowlarr" "$prowlarr_url" "$PROWLARR_API_KEY" "v1" || _failed=$((_failed + 1))
     fi
 
     echo ""
@@ -2019,17 +2047,13 @@ configure_seerr() {
         return 1
     fi
 
-    # Get current Seerr settings
-    local seerr_settings
-    seerr_settings=$(curl -sf --connect-timeout 5 --max-time 15 "${seerr_url}/api/v1/settings/main" 2>/dev/null) || true
-    [[ -z "$seerr_settings" ]] && {
-        log_warn "  Could not retrieve Seerr settings."
-        return 1
-    }
+    # Get current Seerr Radarr settings
+    local radarr_settings
+    radarr_settings=$(curl -sf --connect-timeout 5 --max-time 15 "${seerr_url}/api/v1/settings/radarr" 2>/dev/null) || true
 
     # Check if Radarr is already configured
-    if echo "$seerr_settings" | grep -q '"hostname":"radarr"' 2>/dev/null ||
-        echo "$seerr_settings" | grep -q '"hostname": "radarr"' 2>/dev/null; then
+    if [[ -n "$radarr_settings" ]] && (echo "$radarr_settings" | grep -q '"hostname":"radarr"' 2>/dev/null ||
+        echo "$radarr_settings" | grep -q '"hostname": "radarr"' 2>/dev/null); then
         log_info "  Seerr already has Radarr configured."
     else
         # Query Radarr's default quality profile
@@ -2067,9 +2091,13 @@ configure_seerr() {
             log_warn "  Failed to add Radarr to Seerr. You can configure it manually."
     fi
 
+    # Get current Seerr Sonarr settings
+    local sonarr_settings
+    sonarr_settings=$(curl -sf --connect-timeout 5 --max-time 15 "${seerr_url}/api/v1/settings/sonarr" 2>/dev/null) || true
+
     # Check if Sonarr is already configured
-    if echo "$seerr_settings" | grep -q '"hostname":"sonarr"' 2>/dev/null ||
-        echo "$seerr_settings" | grep -q '"hostname": "sonarr"' 2>/dev/null; then
+    if [[ -n "$sonarr_settings" ]] && (echo "$sonarr_settings" | grep -q '"hostname":"sonarr"' 2>/dev/null ||
+        echo "$sonarr_settings" | grep -q '"hostname": "sonarr"' 2>/dev/null); then
         log_info "  Seerr already has Sonarr configured."
     else
         # Query Sonarr's default quality profile
@@ -2192,16 +2220,21 @@ configure_plex_libraries() {
         return 1
     fi
 
+    # Securely write Plex token to a temp curl config file
+    local curl_cfg
+    curl_cfg=$(mktemp /tmp/plex-curl.XXXXXX)
+    echo "header = \"X-Plex-Token: ${plex_token}\"" > "${curl_cfg}"
+    trap 'rm -f "${curl_cfg}"' RETURN
+
     # Check if libraries already exist
     local existing_libs
-    existing_libs=$(curl -sf --connect-timeout 5 --max-time 15 -H "X-Plex-Token: ${plex_token}" "${plex_url}/library/sections" 2>/dev/null) || true
+    existing_libs=$(curl -K "${curl_cfg}" -sf --connect-timeout 5 --max-time 15 "${plex_url}/library/sections" 2>/dev/null) || true
 
     if echo "$existing_libs" | grep -q 'title="Movies"' 2>/dev/null; then
         log_info "  Plex 'Movies' library already exists."
     else
         # Add Movies library
-        curl -sf --connect-timeout 5 --max-time 15 -X POST \
-            -H "X-Plex-Token: ${plex_token}" \
+        curl -K "${curl_cfg}" -sf --connect-timeout 5 --max-time 15 -X POST \
             "${plex_url}/library/sections?name=Movies&type=movie&agent=tv.plex.agents.movie&scanner=Plex%20Movie&language=en&location=%2Fdata%2Fmedia%2Fmovies" \
             -o /dev/null 2>/dev/null && log_info "  Plex 'Movies' library added." ||
             log_warn "  Failed to add Movies library. You can add it manually in Plex."
@@ -2211,8 +2244,7 @@ configure_plex_libraries() {
         log_info "  Plex 'TV Shows' library already exists."
     else
         # Add TV Shows library
-        curl -sf --connect-timeout 5 --max-time 15 -X POST \
-            -H "X-Plex-Token: ${plex_token}" \
+        curl -K "${curl_cfg}" -sf --connect-timeout 5 --max-time 15 -X POST \
             "${plex_url}/library/sections?name=TV%20Shows&type=show&agent=tv.plex.agents.series&scanner=Plex%20Series&language=en&location=%2Fdata%2Fmedia%2Ftv" \
             -o /dev/null 2>/dev/null && log_info "  Plex 'TV Shows' library added." ||
             log_warn "  Failed to add TV Shows library. You can add it manually in Plex."
@@ -2242,7 +2274,8 @@ add_default_indexer() {
         return 0
     fi
 
-    # Add 1337x as a default public indexer
+    # Add default public indexer (configurable URL)
+    local indexer_url="${TORBOX_INDEXER_URL:-https://1337x.to}"
     curl -sf --connect-timeout 5 --max-time 15 -X POST \
         -H "Content-Type: application/json" \
         -H "X-Api-Key: ${PROWLARR_API_KEY}" \
@@ -2250,7 +2283,7 @@ add_default_indexer() {
         -d '{
             "name": "1337x",
             "fields": [
-                {"name": "baseUrl", "value": "https://1337x.to"},
+                {"name": "baseUrl", "value": "'"${indexer_url}"'"},
                 {"name": "apiPath", "value": ""},
                 {"name": "apiKey", "value": ""},
                 {"name": "queryLimit", "value": 0}
@@ -2266,7 +2299,7 @@ add_default_indexer() {
                 {"id": 2000, "name": "Movies"},
                 {"id": 5000, "name": "TV"}
             ]
-        }' -o /dev/null 2>/dev/null && log_info "  Default indexer '1337x' added to Prowlarr." ||
+        }' -o /dev/null 2>/dev/null && log_info "  Default indexer '1337x' added to Prowlarr (${indexer_url})." ||
         log_warn "  Failed to add default indexer. You can add indexers manually in Prowlarr."
 }
 
@@ -2275,13 +2308,13 @@ add_default_indexer() {
 # ============================================================================
 
 configure_arr_auth() {
-    local name="$1" url="$2" api_key="$3"
+    local name="$1" url="$2" api_key="$3" api_ver="${4:-v3}"
 
     log_step "Configuring ${name} authentication..."
 
     # Check current auth config
     local auth_config
-    auth_config=$(curl -sf --connect-timeout 5 --max-time 15 -H "X-Api-Key: ${api_key}" "${url}/api/v3/config/host" 2>/dev/null) || true
+    auth_config=$(curl -sf --connect-timeout 5 --max-time 15 -H "X-Api-Key: ${api_key}" "${url}/api/${api_ver}/config/host" 2>/dev/null) || true
     [[ -z "$auth_config" ]] && {
         log_warn "  Could not retrieve ${name} auth config."
         return 1
@@ -2358,11 +2391,11 @@ configure_arr_auth() {
         return 1
     }
 
-    if curl -sf --connect-timeout 5 --max-time 15 -X PUT \
+    if echo "$updated_auth" | curl -sf --connect-timeout 5 --max-time 15 -X PUT \
         -H "Content-Type: application/json" \
         -H "X-Api-Key: ${api_key}" \
-        "${url}/api/v3/config/host/${auth_id}" \
-        -d "$updated_auth" -o /dev/null 2>/dev/null; then
+        "${url}/api/${api_ver}/config/host/${auth_id}" \
+        -d @- -o /dev/null 2>/dev/null; then
         log_info "  ${name} auth set to Forms (Enabled) with auto-generated credentials."
         local env_key_prefix
         case "$name" in
@@ -2605,11 +2638,13 @@ print_post_install() {
         echo ""
     fi
     echo ""
-    echo -e "  ${GREEN}✓  Auto-start on boot is enabled.${NC}"
-    echo "     A systemd service (torbox-media-server) handles mount propagation"
-    echo "     and starts all containers automatically when your computer boots."
-    echo "     To disable: sudo systemctl disable torbox-media-server"
-    echo ""
+    if [[ "${HAS_SYSTEMD:-true}" == "true" ]]; then
+        echo -e "  ${GREEN}✓  Auto-start on boot is enabled.${NC}"
+        echo "     A systemd service (torbox-media-server) handles mount propagation"
+        echo "     and starts all containers automatically when your computer boots."
+        echo "     To disable: sudo systemctl disable torbox-media-server"
+        echo ""
+    fi
 
     echo -e "${BOLD}━━━━ Management ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
@@ -2661,6 +2696,7 @@ EXISTING_SONARR_ADMIN_USER=""
 EXISTING_SONARR_ADMIN_PASS=""
 EXISTING_PROWLARR_ADMIN_USER=""
 EXISTING_PROWLARR_ADMIN_PASS=""
+EXISTING_COMPOSE_PROFILES=""
 
 check_existing_installation() {
     if [[ -f "${SETUP_COMPLETE_FILE}" ]]; then
@@ -2751,7 +2787,7 @@ start_services() {
     fi
     if [[ "${start_now,,}" != "n" ]]; then
         log_step "Starting Docker containers (first run downloads ~5-8 GB of images, this may take several minutes)..."
-        if ! (cd "${INSTALL_DIR}" && compose_cmd up -d --remove-orphans); then
+        if ! compose_cmd up -d --remove-orphans; then
             log_error "Failed to start services. Check your internet connection and disk space."
             log_error "Try running: cd ${INSTALL_DIR} && docker compose --env-file .env -f docker-compose.yml up -d"
             return 1
@@ -2794,7 +2830,7 @@ main() {
                 echo "  TORBOX_MEDIA_SERVER   'plex' or 'jellyfin' (default: plex)"
                 echo "  TORBOX_PLEX_CLAIM     Plex claim token (optional)"
                 echo "  TORBOX_MOUNT_DIR      Mount directory (default: /mnt/torbox-media)"
-                echo "  TORBOX_HW_ACCEL       'intel', 'nvidia', or 'none' (auto-detects if unset)"
+                echo "  TORBOX_HW_ACCEL       'intel', 'nvidia', 'amd', or 'none' (auto-detects if unset)"
                 echo "  TORBOX_START_SERVICES 'true' or 'false' (default: true)"
                 exit 0
                 ;;

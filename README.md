@@ -336,6 +336,10 @@ cd torbox-media-server/
 ./manage.sh keys      # Show API keys (use with care)
 ./manage.sh enable    # Enable auto-start on boot
 ./manage.sh disable   # Disable auto-start on boot
+./manage.sh backup    # Backup configuration and credentials
+./manage.sh restore   # Restore configuration from a backup
+./manage.sh health    # Run health checks on all services
+./manage.sh shell svc # Open a shell inside a container (e.g. radarr)
 ```
 
 > **Auto-start on boot:** The setup script installs a systemd service (`torbox-media-server`) that automatically handles mount propagation and starts all containers when your computer boots. You don't need to do anything — just turn on your computer and everything will be running.
@@ -344,7 +348,7 @@ cd torbox-media-server/
 
 ```
 torbox-media-server/
-├── docker-compose.yml          # Auto-generated Docker Compose
+├── docker-compose.yml          # Version-controlled Docker Compose
 ├── .env                        # API keys, user IDs, timezone, mount paths
 ├── manage.sh                   # Management script (start/stop/logs/etc.)
 ├── configs/
@@ -436,8 +440,8 @@ chmod +x uninstall.sh
 The script will:
 1. Stop and remove all Docker containers and the network
 2. Remove the systemd auto-start service
-3. Remove the installation directory (configs, data, docker-compose, .env)
-4. Unmount and remove the mount point
+3. Unmount and remove the mount point
+4. Remove the installation directory (configs, data, docker-compose, .env)
 5. Optionally remove Docker images to free ~5–8 GB of disk space
 
 You'll be asked to confirm before anything is removed. Your TorBox account and cloud-stored media are not affected.
