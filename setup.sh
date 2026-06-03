@@ -1763,7 +1763,7 @@ DCJSON_EOF
                 fi
                 curl -sf --connect-timeout 5 --max-time 15 -X POST -H "Content-Type: application/json" -H "X-Api-Key: ${api_key}" \
                     "${url}/api/v3/notification" \
-                    -d @- <<EOF -o /dev/null && log_info "  Plex notification added to ${name} (instant library updates)." || log_warn "  Failed to add Plex notification to ${name}."
+                    -d @- -o /dev/null <<EOF && log_info "  Plex notification added to ${name} (instant library updates)." || log_warn "  Failed to add Plex notification to ${name}."
                     {
                         "name": "Plex",
                         "implementation": "PlexServer",
@@ -1859,7 +1859,7 @@ wait_for_service() {
             return 0
         fi
         local i=0
-        for ((i=0; i<interval; i++)); do
+        for ((i = 0; i < interval; i++)); do
             printf "\r  %s Waiting for %s... %ds/%ds" "${spin_chars:(elapsed + i)%${#spin_chars}:1}" "$name" "$((elapsed + i))" "$max_wait"
             sleep 1
         done
@@ -2223,7 +2223,7 @@ configure_plex_libraries() {
     # Securely write Plex token to a temp curl config file
     local curl_cfg
     curl_cfg=$(mktemp /tmp/plex-curl.XXXXXX)
-    echo "header = \"X-Plex-Token: ${plex_token}\"" > "${curl_cfg}"
+    echo "header = \"X-Plex-Token: ${plex_token}\"" >"${curl_cfg}"
     trap 'rm -f "${curl_cfg}"' RETURN
 
     # Check if libraries already exist

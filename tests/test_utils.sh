@@ -24,9 +24,7 @@ fail() {
 SETUP_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/setup.sh"
 if [[ -f "$SETUP_SCRIPT" ]]; then
     source <(sed -n '/^generate_api_key() {/,/^}/p' "$SETUP_SCRIPT")
-    source <(sed -n '/^mask_key() /,/^}/p' "$SETUP_SCRIPT" 2>/dev/null || true)
-    # Inline mask_key since it's a one-liner in setup.sh:
-    source <(grep '^mask_key() ' "$SETUP_SCRIPT")
+    source <(sed -n '/^mask_key() {/,/^}/p' "$SETUP_SCRIPT")
 else
     echo "Error: setup.sh not found at $SETUP_SCRIPT"
     exit 1

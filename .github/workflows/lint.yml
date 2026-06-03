@@ -62,7 +62,7 @@ jobs:
           # that nested heredocs (or same-named delimiters in a single file) are
           # captured correctly. Strip the cat/EOF wrapper lines from the output.
           awk '
-            /^cat >+"\${INSTALL_DIR}\/manage.sh" <</ {
+            /^[[:space:]]*cat >+"\${INSTALL_DIR}\/manage.sh" <</ {
               match($0, /<<'\''(MANAGE_[A-Z_]+)'\''$/, m)
               tag = m[1]
               print "### " NR ": " $0

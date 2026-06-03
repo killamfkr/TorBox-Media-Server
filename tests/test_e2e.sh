@@ -44,12 +44,6 @@ section() {
     echo "━━━ $1 ━━━"
 }
 
-# ── Helper: extract function from setup.sh ──────────────────────────────────
-extract_function() {
-    local func_name="$1"
-    sed -n "/^${func_name}() {/,/^}/p" "$SETUP_SCRIPT"
-}
-
 # ============================================================================
 #  1. SYNTAX VALIDATION
 # ============================================================================
@@ -238,8 +232,8 @@ fi
 # 4.2 BUG-2: configure_arr_auth must use v1 for Prowlarr, not hardcoded v3
 auth_func=$(sed -n '/^configure_arr_auth()/,/^}/p' "$SETUP_SCRIPT")
 # Check if the function always uses /api/v3 without accepting a version parameter
-if echo "$auth_func" | grep -qF '/api/v3/config/host' && \
-   ! echo "$auth_func" | grep -qE 'api_ver|api_version'; then
+if echo "$auth_func" | grep -qF '/api/v3/config/host' &&
+    ! echo "$auth_func" | grep -qE 'api_ver|api_version'; then
     fail "BUG-2: configure_arr_auth hardcodes /api/v3 — Prowlarr uses v1" \
         "Line 2289: Auth config for Prowlarr silently fails (404)"
 else
@@ -248,9 +242,9 @@ fi
 
 # 4.3 BUG-3: Admin credential preservation must check each service independently
 cred_block=$(sed -n '/EXISTING_RADARR_ADMIN_USER/,/PROWLARR_ADMIN_PASS/p' "$SETUP_SCRIPT" | head -20)
-if echo "$cred_block" | grep -q 'EXISTING_RADARR_ADMIN_USER' && \
-   echo "$cred_block" | grep -q 'SONARR_ADMIN_USER.*EXISTING_SONARR' && \
-   ! echo "$cred_block" | grep -qE 'if.*EXISTING_SONARR_ADMIN'; then
+if echo "$cred_block" | grep -q 'EXISTING_RADARR_ADMIN_USER' &&
+    echo "$cred_block" | grep -q 'SONARR_ADMIN_USER.*EXISTING_SONARR' &&
+    ! echo "$cred_block" | grep -qE 'if.*EXISTING_SONARR_ADMIN'; then
     fail "BUG-3: Credential preservation only checks Radarr but assigns Sonarr/Prowlarr" \
         "Lines 649-655: Sonarr/Prowlarr may get empty credentials on re-run"
 else
@@ -284,8 +278,8 @@ fi
 
 # 4.6 FUNC-3: Seerr duplicate check must query correct endpoints
 seerr_func=$(sed -n '/^configure_seerr()/,/^}/p' "$SETUP_SCRIPT")
-if echo "$seerr_func" | grep -q 'settings/main' && \
-   echo "$seerr_func" | grep -q '"hostname":"radarr"'; then
+if echo "$seerr_func" | grep -q 'settings/main' &&
+    echo "$seerr_func" | grep -q '"hostname":"radarr"'; then
     fail "FUNC-3: Seerr checks /settings/main for Radarr — should use /settings/radarr" \
         "Creates duplicate Radarr/Sonarr entries on every re-run"
 else
@@ -306,8 +300,8 @@ fi
 
 # 4.8 SH-5: Trap handler should use ${VAR:-} for safety
 trap_handler=$(sed -n '/^cleanup_on_interrupt()/,/^}/p' "$SETUP_SCRIPT")
-if echo "$trap_handler" | grep -qE '\$\{ENV_FILE\}' && \
-   ! echo "$trap_handler" | grep -qE '\$\{ENV_FILE:-'; then
+if echo "$trap_handler" | grep -qE '\$\{ENV_FILE\}' &&
+    ! echo "$trap_handler" | grep -qE '\$\{ENV_FILE:-'; then
     fail "SH-5: Trap handler uses \${ENV_FILE} without :- default (crashes if undefined)" \
         "Lines 30-34: Ctrl-C during early init causes unbound variable error"
 else
@@ -324,8 +318,8 @@ fi
 
 # 4.10 IMP-5: Port regex should match end-of-line
 port_regex_section=$(sed -n '/check_port_conflicts()/,/^}/p' "$SETUP_SCRIPT")
-if echo "$port_regex_section" | grep -qE '\[:space:\]\]"' && \
-   ! echo "$port_regex_section" | grep -qE '\$\|'; then
+if echo "$port_regex_section" | grep -qE '\[:space:\]\]"' &&
+    ! echo "$port_regex_section" | grep -qE '\$\|'; then
     fail "IMP-5: Port conflict regex only matches trailing space, not end-of-line" \
         "Ports at end of line won't be detected"
 else
@@ -411,7 +405,7 @@ trap 'rm -f "$tmpfile"' EXIT
     awk "/cat >>.*manage.sh.*<<'MANAGE_INLINE'/,/^MANAGE_INLINE$/" "$SETUP_SCRIPT" | tail -n +2 | head -n -1
     # Second MANAGE_EOF block
     awk 'BEGIN{n=0} /MANAGE_EOF/{n++; if(n==2) start=1; if(n==3) start=0} start && n==2{print}' "$SETUP_SCRIPT" | tail -n +2
-} > "$tmpfile" 2>/dev/null
+} >"$tmpfile" 2>/dev/null
 
 if bash -n "$tmpfile" 2>/dev/null; then
     pass "Generated manage.sh has valid bash syntax"
@@ -487,8 +481,8 @@ else
 fi
 
 # 8.4 Mount path validation exists (no shell metacharacters)
-if grep -qE 'mount.*regex|mount.*validat|MOUNT_DIR.*\[' "$SETUP_SCRIPT" || \
-   grep -qE 'semicolons|backticks|shell characters' "$SETUP_SCRIPT"; then
+if grep -qE 'mount.*regex|mount.*validat|MOUNT_DIR.*\[' "$SETUP_SCRIPT" ||
+    grep -qE 'semicolons|backticks|shell characters' "$SETUP_SCRIPT"; then
     pass "Mount path validation exists"
 else
     # Check for the actual regex pattern
@@ -529,8 +523,8 @@ else
 fi
 
 # 9.3 Radarr/Sonarr use API v3 in wait_for_service
-if grep -q 'wait_for_service.*Radarr.*v3' "$SETUP_SCRIPT" && \
-   grep -q 'wait_for_service.*Sonarr.*v3' "$SETUP_SCRIPT"; then
+if grep -q 'wait_for_service.*Radarr.*v3' "$SETUP_SCRIPT" &&
+    grep -q 'wait_for_service.*Sonarr.*v3' "$SETUP_SCRIPT"; then
     pass "Radarr/Sonarr use API v3 in wait_for_service"
 else
     fail "Radarr/Sonarr API version mismatch in wait_for_service"
