@@ -2030,10 +2030,13 @@ configure_seerr() {
     local max_wait=60 elapsed=0 interval=3
     local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
-    # Wait for Seerr to be ready
+    # Wait for Seerr API to be ready (hitting / returns HTML before init completes)
     while [[ $elapsed -lt $max_wait ]]; do
-        if curl -sf --connect-timeout 3 --max-time 10 -o /dev/null "${seerr_url}" 2>/dev/null; then
+        if curl -sf --connect-timeout 3 --max-time 10 -o /dev/null "${seerr_url}/api/v1/status" 2>/dev/null; then
             printf "\r  %-50s\n" ""
+            log_info "Seerr is ready. (${elapsed}s)"
+            # Give Seerr a moment to fully initialize after API responds
+            sleep 3
             break
         fi
         printf "\r  %s Waiting for Seerr... %ds/%ds" "${spin_chars:elapsed/interval%${#spin_chars}:1}" "$elapsed" "$max_wait"
