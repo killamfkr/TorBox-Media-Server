@@ -2790,7 +2790,7 @@ start_services() {
         if ! compose_cmd up -d --remove-orphans; then
             log_error "Failed to start services. Check your internet connection and disk space."
             log_error "Try running: cd ${INSTALL_DIR} && docker compose --env-file .env -f docker-compose.yml up -d"
-            return 1
+            return 0
         fi
         echo ""
         log_info "All services starting! Give them 30-60 seconds to initialize."

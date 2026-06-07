@@ -32,7 +32,7 @@ services:
       - PGID=${PGID}
       - UMASK=002
     volumes:
-      - "${CONFIG_DIR}/decypharr/config.json:/app/config.json:ro"
+      - "${CONFIG_DIR}/decypharr/config.json:/app/config.json"
       - "${MOUNT_DIR}:/mnt/remote:rshared"
       - "${DATA_DIR}:/data"
     devices:
@@ -61,7 +61,7 @@ services:
   # ── Prowlarr ───────────────────────────────────────────────────
   # Indexer manager - feeds search results to Radarr & Sonarr.
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:2.1.3
+    image: lscr.io/linuxserver/prowlarr:2.3.5
     container_name: prowlarr
     restart: unless-stopped
     networks:
@@ -96,7 +96,7 @@ services:
   # ── Byparr ────────────────────────────────────────────────────
   # Cloudflare bypass proxy (Byparr - drop-in FlareSolverr replacement).
   byparr:
-    image: ghcr.io/thephaseless/byparr:v2.1.0
+    image: ghcr.io/thephaseless/byparr:latest
     container_name: byparr
     restart: unless-stopped
     networks:
