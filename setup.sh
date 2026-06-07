@@ -727,7 +727,7 @@ gather_config() {
             if [[ -n "$_gpu_vendors" ]]; then
                 # Vendor IDs: Intel=8086, AMD=1002/1022, NVIDIA=10de
                 echo "$_gpu_vendors" | grep -qE '\[8086:' && detected_intel=true
-                echo "$_gpu_vendors" | grep -qiE 'amd|ati|\[1002:|\[1022:' && detected_amd=true
+                echo "$_gpu_vendors" | grep -qE '\[1002:|\[1022:' && detected_amd=true
                 echo "$_gpu_vendors" | grep -qiE 'nvidia|\[10de:' && detected_nvidia=true
             else
                 # lspci not available — fall back to inspecting render-node driver symlinks
@@ -867,6 +867,28 @@ gather_config() {
 
             if [[ "$_install_ok" == "true" ]]; then
                 log_info "nvidia-container-toolkit installed successfully."
+                # Configure Docker to use the nvidia runtime and restart
+                log_step "Configuring Docker for NVIDIA GPU..."
+                if sudo nvidia-ctk runtime configure --runtime=docker 2>/dev/null; then
+                    sudo systemctl restart docker 2>/dev/null || true
+                    # Wait for Docker daemon to be ready
+                    local _docker_wait=0
+                    while [[ $_docker_wait -lt 15 ]]; do
+                        if docker info &>/dev/null; then
+                            break
+                        fi
+                        sleep 1
+                        _docker_wait=$((_docker_wait + 1))
+                    done
+                    if docker info &>/dev/null; then
+                        log_info "Docker restarted with NVIDIA runtime."
+                    else
+                        log_warn "Docker restarted but may not be ready. You may need to restart Docker manually."
+                    fi
+                else
+                    log_warn "nvidia-ctk runtime configure failed. NVIDIA GPU may not work in containers."
+                    log_warn "Try: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+                fi
             else
                 log_error "nvidia-container-toolkit installation failed."
                 log_error "Install it manually, then re-run setup.sh."
@@ -2703,7 +2725,7 @@ print_post_install() {
         echo "  Jellyfin reads symlinked files → streams to your devices"
     fi
     echo ""
-    echo "  ${YELLOW}No media is stored locally — everything streams from TorBox!${NC}"
+    echo -e "  ${YELLOW}No media is stored locally — everything streams from TorBox!${NC}"
     echo ""
 }
 
