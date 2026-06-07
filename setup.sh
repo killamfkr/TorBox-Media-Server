@@ -716,7 +716,10 @@ gather_config() {
         if [[ -d /dev/dri ]]; then
             local _gpu_vendors=""
             if command -v lspci &>/dev/null; then
-                _gpu_vendors=$(lspci -nn 2>/dev/null | grep -iE 'vga|3d|display' || true)
+                # Use PCI class codes 0300 (VGA) and 0302 (3D controller) to
+                # avoid false positives — a naive text grep on "3d" matches
+                # hex IDs like [8086:a33d] in PCIe root port lines.
+                _gpu_vendors=$( (lspci -d ::0300 -nn 2>/dev/null; lspci -d ::0302 -nn 2>/dev/null) || true)
             fi
             if [[ -n "$_gpu_vendors" ]]; then
                 # Vendor IDs: Intel=8086, AMD=1002/1022, NVIDIA=10de
@@ -837,22 +840,41 @@ gather_config() {
         fi
     fi
 
-    # Verify nvidia-container-toolkit is installed if NVIDIA is selected
+    # Verify nvidia-container-toolkit is installed if NVIDIA is selected.
+    # Try to auto-install it using the detected package manager.
     if [[ "${HW_ACCEL}" == "nvidia" ]]; then
-        if ! command -v nvidia-container-runtime &>/dev/null &&
-            ! dpkg -s nvidia-container-toolkit &>/dev/null &&
-            ! rpm -q nvidia-container-toolkit &>/dev/null &&
-            ! pacman -Qi nvidia-container-toolkit &>/dev/null; then
-            log_error "NVIDIA GPU detected but nvidia-container-toolkit is not installed."
-            log_error "Docker cannot use NVIDIA GPUs without the container toolkit."
-            echo ""
-            echo "  Install it with:"
-            echo "    Arch/CachyOS: sudo pacman -S nvidia-container-toolkit"
-            echo "    Debian/Ubuntu: sudo apt install nvidia-container-toolkit"
-            echo "    Fedora: sudo dnf install nvidia-container-toolkit"
-            echo ""
-            log_info "Falling back to software transcoding."
-            HW_ACCEL="none"
+        local _has_nvidia_toolkit=false
+        command -v nvidia-container-runtime &>/dev/null && _has_nvidia_toolkit=true
+        dpkg -s nvidia-container-toolkit &>/dev/null 2>&1 && _has_nvidia_toolkit=true
+        rpm -q nvidia-container-toolkit &>/dev/null 2>&1 && _has_nvidia_toolkit=true
+        pacman -Qi nvidia-container-toolkit &>/dev/null 2>&1 && _has_nvidia_toolkit=true
+
+        if [[ "$_has_nvidia_toolkit" == "false" ]]; then
+            log_warn "nvidia-container-toolkit is not installed. Attempting to install..."
+            local _install_ok=false
+            if command -v pacman &>/dev/null; then
+                sudo pacman -S --noconfirm nvidia-container-toolkit && _install_ok=true
+            elif command -v apt-get &>/dev/null; then
+                sudo apt-get update -qq && sudo apt-get install -y nvidia-container-toolkit && _install_ok=true
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y nvidia-container-toolkit && _install_ok=true
+            else
+                log_error "Could not auto-install nvidia-container-toolkit (unknown package manager)."
+            fi
+
+            if [[ "$_install_ok" == "true" ]]; then
+                log_info "nvidia-container-toolkit installed successfully."
+            else
+                log_error "nvidia-container-toolkit installation failed."
+                log_error "Install it manually, then re-run setup.sh."
+                echo ""
+                echo "  Arch/CachyOS: sudo pacman -S nvidia-container-toolkit"
+                echo "  Debian/Ubuntu: sudo apt install nvidia-container-toolkit"
+                echo "  Fedora: sudo dnf install nvidia-container-toolkit"
+                echo ""
+                log_info "Falling back to software transcoding."
+                HW_ACCEL="none"
+            fi
         else
             log_info "nvidia-container-toolkit is installed."
         fi
