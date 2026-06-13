@@ -60,34 +60,53 @@ if (-not $NonInteractive) {
 
 Write-LogInfo "Stopping and removing Docker containers..."
 
+$partialUninstall = $false
+
 if ((Test-Path $EnvFile) -and (Test-Path $ComposeFile)) {
     Set-Location $InstallDir
     docker compose down --remove-orphans 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-LogWarn "Docker compose down failed. Attempting manual cleanup..."
+        $partialUninstall = $true
         $svcs = @("decypharr", "prowlarr", "byparr", "radarr", "sonarr", "seerr", "plex", "jellyfin")
         foreach ($svc in $svcs) {
             docker rm -f $svc 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-LogWarn "Failed to remove container: $svc"
+            }
         }
     }
 } else {
     Write-LogWarn "Missing .env or docker-compose.yml. Skipping compose down."
+    $partialUninstall = $true
     $svcs = @("decypharr", "prowlarr", "byparr", "radarr", "sonarr", "seerr", "plex", "jellyfin")
     foreach ($svc in $svcs) {
         docker rm -f $svc 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-LogWarn "Failed to remove container: $svc"
+        }
     }
 }
 
 $projectName = (Split-Path $InstallDir -Leaf).ToLower() -replace '[^a-z0-9_-]', ''
 docker network rm "${projectName}_media-network" 2>&1 | Out-Null
 
-Write-LogInfo "Removing installation directory..."
-if ($InstallDir -match "torbox-media-server$") {
-    Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
-    Write-LogInfo "Removed: $InstallDir"
+if ($partialUninstall) {
+    Write-LogWarn "Docker teardown had failures. Skipping local file deletion to preserve state."
+    Write-LogInfo "Installation directory preserved: $InstallDir"
 } else {
-    Write-LogError "Installation directory path is invalid: $InstallDir"
-    return
+    Write-LogInfo "Removing installation directory..."
+    if ($InstallDir -match "torbox-media-server$") {
+        Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path $InstallDir)) {
+            Write-LogInfo "Removed: $InstallDir"
+        } else {
+            Write-LogError "Failed to remove: $InstallDir"
+        }
+    } else {
+        Write-LogError "Installation directory path is invalid: $InstallDir"
+        return
+    }
 }
 
 if (-not $NonInteractive) {
@@ -98,9 +117,13 @@ if (-not $NonInteractive) {
 
 if ($removeImages.ToLower() -eq 'y') {
     Write-LogInfo "Removing Docker images..."
-    # Simplified cleanup for Windows - removing known torbox images or prunning
-    docker system prune -a --volumes --force 2>&1 | Out-Null
-    Write-LogInfo "Pruned Docker images and volumes."
+    if ((Test-Path $EnvFile) -and (Test-Path $ComposeFile)) {
+        Set-Location $InstallDir
+        docker compose down --rmi all --volumes --remove-orphans 2>&1 | Out-Null
+        Write-LogInfo "Removed project images and volumes."
+    } else {
+        Write-LogInfo "Compose file not available. Skipping image removal."
+    }
 } else {
     Write-LogInfo "Docker images kept."
 }

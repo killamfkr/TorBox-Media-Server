@@ -319,16 +319,27 @@ function Invoke-GenerateArrConfigs {
 
 function Invoke-GenerateDockerCompose {
     Write-LogStep "Setting up Docker Compose..."
-    Copy-Item -Path (Join-Path $ScriptDir "docker-compose.yml") -Destination $ComposeFile -Force
+
+    $SourceFile = Join-Path $ScriptDir "docker-compose.yml"
+    if (-not (Test-Path $SourceFile)) {
+        Write-LogWarn "Source docker-compose.yml not found at: $SourceFile"
+        Write-LogStep "Failed to set up Docker Compose."
+        return
+    }
+
+    Copy-Item -Path $SourceFile -Destination $ComposeFile -Force
+    Write-LogInfo "Copied docker-compose.yml to: $ComposeFile"
+
     $OverrideFile = Join-Path $InstallDir "docker-compose.override.yml"
     if (Test-Path $OverrideFile) { Remove-Item -Path $OverrideFile -Force }
 
     try {
+        Set-Location $InstallDir
         docker compose config -q 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
-            Write-LogInfo "Docker Compose file validated successfully."
+            Write-LogInfo "Docker Compose file at $ComposeFile validated successfully."
         } else {
-            Write-LogWarn "Docker Compose validation failed."
+            Write-LogWarn "Docker Compose validation failed for $ComposeFile."
         }
     } catch {
         Write-LogWarn "Docker daemon not accessible or compose failed."
@@ -663,7 +674,8 @@ function Invoke-ConfigureArrService {
                 fields = @(
                     @{ name = "host"; value = "decypharr" },
                     @{ name = "port"; value = 8282 },
-                    @{ name = "username"; value = "http://$Type:$Port" }
+                    @{ name = "username"; value = "" },
+                    @{ name = "password"; value = "" }
                 )
             }
             Invoke-RestMethod -Uri "$Url/api/v3/downloadclient" -Method Post -Headers $headers -Body ($body | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
