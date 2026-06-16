@@ -16,6 +16,8 @@
 
 A single script that installs, configures, and runs a complete debrid-powered media server using Docker. **No media is stored locally** — everything streams from [TorBox](https://torbox.app)'s cloud. Think of it as your own personal Netflix where *you* decide what's available, backed by TorBox's cloud download and cache infrastructure.
 
+*Disclaimer: This project inherits TorBox's official terms of service and does not condone or allow piracy; users are solely responsible for ensuring they have the legal right to access and stream any content.*
+
 ## ⚡ Quick Start
 
 ### Linux
