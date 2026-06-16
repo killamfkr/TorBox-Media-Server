@@ -2286,7 +2286,6 @@ configure_plex_libraries() {
     local existing_libs
     existing_libs=$(curl -sf --connect-timeout 5 --max-time 15 -H "${plex_auth_header}" "${plex_url}/library/sections" 2>/dev/null) || true
 
-
     if echo "$existing_libs" | grep -q 'title="Movies"' 2>/dev/null; then
         log_info "  Plex 'Movies' library already exists."
     else
