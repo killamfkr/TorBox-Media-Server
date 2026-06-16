@@ -62,6 +62,31 @@ function Get-MaskedKey ($Key) {
     return $Key
 }
 
+# Write a UTF-8 text file WITHOUT a byte-order mark. Windows PowerShell 5.1's
+# `Set-Content -Encoding UTF8` prepends a BOM, which corrupts the first .env
+# variable for Docker Compose and breaks *arr config.xml parsing.
+function Write-TextFile ($Path, $Content) {
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
+# Parse a KEY=value .env file into a hashtable. Used to preserve existing
+# API keys / credentials across re-runs so integrations don't break.
+function Read-EnvFile ($Path) {
+    $result = @{}
+    if (-not (Test-Path $Path)) { return $result }
+    foreach ($line in (Get-Content -Path $Path)) {
+        $trimmed = $line.Trim()
+        if ($trimmed -eq "" -or $trimmed.StartsWith("#")) { continue }
+        $idx = $trimmed.IndexOf("=")
+        if ($idx -lt 1) { continue }
+        $name = $trimmed.Substring(0, $idx).Trim()
+        $value = $trimmed.Substring($idx + 1).Trim().Trim('"').Trim("'")
+        $result[$name] = $value
+    }
+    return $result
+}
+
 $SvcOrder = @('decypharr', 'prowlarr', 'byparr', 'radarr', 'sonarr', 'seerr')
 $SvcPorts = @{
     'decypharr' = 8282; 'prowlarr' = 9696; 'byparr' = 8191;
@@ -140,6 +165,64 @@ function Test-PortConflicts {
     return $true
 }
 
+function Invoke-CheckExistingInstallation {
+    # Populated with values preserved from a prior install; empty otherwise.
+    $global:ExistingEnv = @{}
+
+    if (Test-Path $SetupCompleteFile) {
+        Write-LogSection "Existing Installation Detected"
+        Write-LogWarn "A previous installation was found at: $InstallDir"
+        Write-Host ""
+        Write-Host "  Re-running will regenerate Docker Compose and configs."
+        Write-Host "  Your existing API keys will be PRESERVED to avoid breaking integrations."
+        Write-Host ""
+
+        if (-not $NonInteractive) {
+            $rerun = Read-Host "Continue with re-configuration? [y/N]"
+            if ($rerun.ToLower() -ne 'y') {
+                Write-LogInfo "Setup cancelled. Your existing installation is unchanged."
+                exit 0
+            }
+        }
+
+        # Back up existing generated files before overwriting.
+        $backupTs = Get-Date -Format "yyyyMMdd_HHmmss"
+        foreach ($bf in @($EnvFile, $ComposeFile, "$ConfigDir\decypharr\config.json")) {
+            if (Test-Path $bf) { Copy-Item -Path $bf -Destination "$bf.bak.$backupTs" -Force }
+        }
+        Write-LogInfo "Backed up existing config files (.bak.$backupTs)."
+
+        $global:ExistingEnv = Read-EnvFile $EnvFile
+
+        # Drop API keys that aren't valid 32-char hex so they get regenerated.
+        foreach ($k in @('RADARR_API_KEY', 'SONARR_API_KEY', 'PROWLARR_API_KEY')) {
+            if ($global:ExistingEnv.ContainsKey($k) -and $global:ExistingEnv[$k] -notmatch '^[0-9a-f]{32}$') {
+                Write-LogWarn "Corrupted API key detected for $k. Will regenerate."
+                $global:ExistingEnv.Remove($k)
+            }
+        }
+        if ($global:ExistingEnv.ContainsKey('RADARR_API_KEY')) {
+            Write-LogInfo "Existing API keys loaded and will be preserved."
+        }
+        Write-Host ""
+    } elseif ((Test-Path $EnvFile) -and -not (Test-Path $SetupCompleteFile)) {
+        # .env exists but setup never completed — a prior run was interrupted.
+        Write-LogSection "Incomplete Installation Detected"
+        Write-LogWarn "A previous setup was interrupted before completion."
+        Write-LogWarn "Starting fresh (incomplete state will be cleaned up)."
+        Write-Host ""
+        Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Reuse a preserved value from a prior install, or fall back to a generator.
+function Get-OrNew ($EnvKey, [scriptblock]$Generator) {
+    if ($global:ExistingEnv -and $global:ExistingEnv.ContainsKey($EnvKey) -and -not [string]::IsNullOrEmpty($global:ExistingEnv[$EnvKey])) {
+        return $global:ExistingEnv[$EnvKey]
+    }
+    return (& $Generator)
+}
+
 function Invoke-GatherConfig {
     Write-LogSection "Configuration"
 
@@ -147,17 +230,35 @@ function Invoke-GatherConfig {
     Write-Host "  Get your API key from: https://torbox.app/settings"
 
     $TorboxApiKey = $env:TORBOX_API_KEY
+    $existingTorboxKey = ""
+    if ($global:ExistingEnv -and $global:ExistingEnv.ContainsKey('TORBOX_API_KEY')) {
+        $existingTorboxKey = $global:ExistingEnv['TORBOX_API_KEY']
+    }
     if ([string]::IsNullOrEmpty($TorboxApiKey)) {
-        if ($NonInteractive) {
+        if (-not [string]::IsNullOrEmpty($existingTorboxKey)) {
+            # Re-run: keep the saved key unless the user enters a new one.
+            if ($NonInteractive) {
+                $TorboxApiKey = $existingTorboxKey
+                Write-LogInfo "Reusing existing TorBox API key."
+            } else {
+                Write-Host "  An existing TorBox API key was found ($(Get-MaskedKey $existingTorboxKey))."
+                $secureStr = Read-Host -AsSecureString "  Enter a new TorBox API key (or press Enter to keep existing)"
+                $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureStr)
+                $TorboxApiKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+                if ([string]::IsNullOrEmpty($TorboxApiKey)) { $TorboxApiKey = $existingTorboxKey }
+            }
+        } elseif ($NonInteractive) {
             Write-LogError "Non-interactive mode requires TORBOX_API_KEY environment variable."
             return $false
-        }
-        while ([string]::IsNullOrEmpty($TorboxApiKey)) {
-            $secureStr = Read-Host -AsSecureString "  Enter your TorBox API key"
-            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureStr)
-            $TorboxApiKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-            if ([string]::IsNullOrEmpty($TorboxApiKey)) { Write-LogError "API key cannot be empty." }
+        } else {
+            while ([string]::IsNullOrEmpty($TorboxApiKey)) {
+                $secureStr = Read-Host -AsSecureString "  Enter your TorBox API key"
+                $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureStr)
+                $TorboxApiKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+                if ([string]::IsNullOrEmpty($TorboxApiKey)) { Write-LogError "API key cannot be empty." }
+            }
         }
     }
 
@@ -206,19 +307,20 @@ function Invoke-GatherConfig {
     $global:PGID = 1000
     $global:TZ = [System.TimeZoneInfo]::Local.Id
 
-    $global:RadarrApiKey = New-ApiKey
-    $global:SonarrApiKey = New-ApiKey
-    $global:ProwlarrApiKey = New-ApiKey
+    # Preserve existing keys/credentials across re-runs; only generate when absent.
+    $global:RadarrApiKey = Get-OrNew 'RADARR_API_KEY' { New-ApiKey }
+    $global:SonarrApiKey = Get-OrNew 'SONARR_API_KEY' { New-ApiKey }
+    $global:ProwlarrApiKey = Get-OrNew 'PROWLARR_API_KEY' { New-ApiKey }
 
-    $global:RadarrAdminUser = "admin"
-    $global:RadarrAdminPass = New-AdminPass
-    $global:SonarrAdminUser = "admin"
-    $global:SonarrAdminPass = New-AdminPass
-    $global:ProwlarrAdminUser = "admin"
-    $global:ProwlarrAdminPass = New-AdminPass
+    $global:RadarrAdminUser = Get-OrNew 'RADARR_ADMIN_USER' { "admin" }
+    $global:RadarrAdminPass = Get-OrNew 'RADARR_ADMIN_PASS' { New-AdminPass }
+    $global:SonarrAdminUser = Get-OrNew 'SONARR_ADMIN_USER' { "admin" }
+    $global:SonarrAdminPass = Get-OrNew 'SONARR_ADMIN_PASS' { New-AdminPass }
+    $global:ProwlarrAdminUser = Get-OrNew 'PROWLARR_ADMIN_USER' { "admin" }
+    $global:ProwlarrAdminPass = Get-OrNew 'PROWLARR_ADMIN_PASS' { New-AdminPass }
 
-    $global:DecypharrUser = "torbox"
-    $global:DecypharrPass = New-AdminPass
+    $global:DecypharrUser = Get-OrNew 'DECYPHARR_USER' { "torbox" }
+    $global:DecypharrPass = Get-OrNew 'DECYPHARR_PASS' { New-AdminPass }
     return $true
 }
 
@@ -288,7 +390,7 @@ function Invoke-GenerateDecypharrConfig {
   }
 }
 "@
-    Set-Content -Path "$ConfigDir\decypharr\config.json" -Value $configJson -Encoding UTF8
+    Write-TextFile -Path "$ConfigDir\decypharr\config.json" -Content $configJson
 }
 
 function Invoke-GenerateArrConfigs {
@@ -313,7 +415,7 @@ function Invoke-GenerateArrConfigs {
   <ApiKey>$key</ApiKey>
 </Config>
 "@
-        Set-Content -Path "$ConfigDir\$name\config.xml" -Value $configXml -Encoding UTF8
+        Write-TextFile -Path "$ConfigDir\$name\config.xml" -Content $configXml
     }
 }
 
@@ -395,7 +497,7 @@ COMPOSE_PROFILES=$global:MediaServer
         $envContent += "`nPLEX_CLAIM=$global:PlexClaim"
     }
 
-    Set-Content -Path $EnvFile -Value $envContent -Encoding UTF8
+    Write-TextFile -Path $EnvFile -Content ($envContent + "`n")
 }
 
 function Invoke-StartServices {
@@ -463,12 +565,12 @@ function Invoke-ConfigureArrAuth {
 
         $userVar = "$($Name)AdminUser"
         $passVar = "$($Name)AdminPass"
-        $user = (Get-Variable -Name $userVar -ValueOnly -ErrorAction SilentlyContinue)
-        $pass = (Get-Variable -Name $passVar -ValueOnly -ErrorAction SilentlyContinue)
+        $user = (Get-Variable -Name $userVar -Scope Global -ValueOnly -ErrorAction SilentlyContinue)
+        $pass = (Get-Variable -Name $passVar -Scope Global -ValueOnly -ErrorAction SilentlyContinue)
 
         if ($user -and $pass) {
             $config.authenticationMethod = "forms"
-            $config.authenticationRequired = "enabledForRequests"
+            $config.authenticationRequired = "enabled"
             $config.username = $user
             $config.password = $pass
 
@@ -664,6 +766,15 @@ function Invoke-ConfigureArrService {
         }
 
         if (-not $clientExists) {
+            # Decypharr presents itself as a qBittorrent mock. It identifies the
+            # calling *arr via username=internal URL + password=API key, and routes
+            # by category. These fields must match setup.sh for the integration to work.
+            $internalUrl = "http://$($Type):$($Port)"
+            if ($Type -eq "sonarr") {
+                $catField = "tvCategory"; $catImportedField = "tvImportedCategory"
+            } else {
+                $catField = "movieCategory"; $catImportedField = "movieImportedCategory"
+            }
             $body = @{
                 enable = $true
                 name = "Decypharr"
@@ -671,14 +782,22 @@ function Invoke-ConfigureArrService {
                 configContract = "QBittorrentSettings"
                 protocol = "torrent"
                 priority = 1
+                removeCompletedDownloads = $true
+                removeFailedDownloads = $true
                 fields = @(
                     @{ name = "host"; value = "decypharr" },
                     @{ name = "port"; value = 8282 },
-                    @{ name = "username"; value = "" },
-                    @{ name = "password"; value = "" }
+                    @{ name = "useSsl"; value = $false },
+                    @{ name = "username"; value = $internalUrl },
+                    @{ name = "password"; value = $ApiKey },
+                    @{ name = $catField; value = $Type },
+                    @{ name = $catImportedField; value = "" },
+                    @{ name = "initialState"; value = 0 },
+                    @{ name = "sequentialOrder"; value = $false },
+                    @{ name = "firstAndLastFirst"; value = $false }
                 )
             }
-            Invoke-RestMethod -Uri "$Url/api/v3/downloadclient" -Method Post -Headers $headers -Body ($body | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
+            Invoke-RestMethod -Uri "$Url/api/v3/downloadclient?forceSave=true" -Method Post -Headers $headers -Body ($body | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
             Write-LogInfo "  Decypharr download client added to $Name."
         }
 
@@ -851,11 +970,11 @@ function Invoke-PrintPostInstall {
 function Main {
     foreach ($arg in $args) {
         switch ($arg) {
-            "-y" { $global:NonInteractive = $true }
-            "--yes" { $global:NonInteractive = $true }
-            "--non-interactive" { $global:NonInteractive = $true }
-            "-d" { $global:DryRun = $true }
-            "--dry-run" { $global:DryRun = $true }
+            "-y" { $script:NonInteractive = $true }
+            "--yes" { $script:NonInteractive = $true }
+            "--non-interactive" { $script:NonInteractive = $true }
+            "-d" { $script:DryRun = $true }
+            "--dry-run" { $script:DryRun = $true }
             "-h" {
                 Write-Host "TorBox Media Server Setup v$Version"
                 Write-Host "Usage: .\setup.ps1 [OPTIONS]"
@@ -871,10 +990,11 @@ function Main {
 
     Invoke-PrintBanner
     if (-not (Test-Dependencies)) { return }
+    Invoke-CheckExistingInstallation
     if (-not (Invoke-GatherConfig)) { return }
     if (-not (Test-PortConflicts)) { return }
 
-    if ($global:DryRun) {
+    if ($script:DryRun) {
         Write-LogSection "Dry Run - Preview of Actions"
         Write-LogInfo "Would create directories, generate configs, and start services."
         return
