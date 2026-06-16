@@ -757,9 +757,9 @@ test_compose_env_vars_have_defaults() {
 
 test_gitignore_has_backup_patterns() {
     local gitignore="${SCRIPT_DIR}/../.gitignore"
-    if grep -q '^backups/$' "$gitignore" && \
-       grep -q 'torbox_backup_' "$gitignore" && \
-       grep -q '[*][.]bak' "$gitignore"; then
+    if grep -q '^backups/$' "$gitignore" &&
+        grep -q 'torbox_backup_' "$gitignore" &&
+        grep -q '[*][.]bak' "$gitignore"; then
         pass ".gitignore covers backups/, torbox_backup_*/, *.bak"
     else
         fail ".gitignore missing backup patterns"
@@ -768,8 +768,8 @@ test_gitignore_has_backup_patterns() {
 
 test_lint_yml_has_powershell_job() {
     local lint_file="${SCRIPT_DIR}/../.github/workflows/lint.yml"
-    if grep -q 'powershell-lint' "$lint_file" && \
-       grep -q 'PSScriptAnalyzer' "$lint_file"; then
+    if grep -q 'powershell-lint' "$lint_file" &&
+        grep -q 'PSScriptAnalyzer' "$lint_file"; then
         pass "lint.yml has PowerShell linting job"
     else
         fail "PSScriptAnalyzer job missing"
@@ -778,8 +778,8 @@ test_lint_yml_has_powershell_job() {
 
 test_lint_yml_tests_both_profiles() {
     local lint_file="${SCRIPT_DIR}/../.github/workflows/lint.yml"
-    if grep -q 'COMPOSE_PROFILES=plex' "$lint_file" && \
-       grep -q 'COMPOSE_PROFILES=jellyfin' "$lint_file"; then
+    if grep -q 'COMPOSE_PROFILES=plex' "$lint_file" &&
+        grep -q 'COMPOSE_PROFILES=jellyfin' "$lint_file"; then
         pass "lint.yml validates both plex and jellyfin profiles"
     else
         fail "Profile-based compose validation missing"

@@ -1038,12 +1038,12 @@ generate_decypharr_config() {
         if command -v jq &>/dev/null; then
             local _tmp="${CONFIG_DIR}/decypharr/config.json.tmp.$$"
             if jq --arg key "${TORBOX_API_KEY}" \
-                  --arg user "${DECYPHARR_USER}" \
-                  --arg pass "${DECYPHARR_PASS:-}" \
-                  '(.debrids[0] // {}).api_key = $key
+                --arg user "${DECYPHARR_USER}" \
+                --arg pass "${DECYPHARR_PASS:-}" \
+                '(.debrids[0] // {}).api_key = $key
                    | if $pass != "" then .password = $pass else . end
                    | .username = $user' \
-                  "${CONFIG_DIR}/decypharr/config.json" > "$_tmp" 2>/dev/null; then
+                "${CONFIG_DIR}/decypharr/config.json" >"$_tmp" 2>/dev/null; then
                 mv "$_tmp" "${CONFIG_DIR}/decypharr/config.json"
                 chmod 600 "${CONFIG_DIR}/decypharr/config.json"
                 log_info "Refreshed TorBox API key in existing Decypharr config (other settings preserved)."
