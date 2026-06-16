@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, master]
 
+# Cancel superseded runs on the same PR/branch to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   shfmt:
     name: Shell Format
@@ -43,6 +48,61 @@ jobs:
       - name: Lint tests
         run: shellcheck tests/*.sh
 
+  powershell-lint:
+    name: PowerShell Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PowerShell
+        run: |
+          # Install PowerShell Core so PSScriptAnalyzer can run on Linux.
+          curl -sSL "https://packages.microsoft.com/keys/microsoft.asc" | sudo gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/22.04/prod jammy main" | sudo tee /etc/apt/sources.list.d/microsoft.list
+          sudo apt-get update && sudo apt-get install -y powershell
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Lint setup.ps1
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path setup.ps1 -Severity Warning
+          if ($results) {
+            $results | Format-Table -AutoSize
+            # Fail on errors; warnings are reported but non-fatal.
+            $errors = $results | Where-Object Severity -eq 'Error'
+            if ($errors) { exit 1 }
+          }
+
+      - name: Lint uninstall.ps1
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path uninstall.ps1 -Severity Warning
+          if ($results) {
+            $results | Format-Table -AutoSize
+            $errors = $results | Where-Object Severity -eq 'Error'
+            if ($errors) { exit 1 }
+          }
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $files = @('setup.ps1', 'uninstall.ps1')
+          foreach ($f in $files) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              Write-Host "::error::Syntax errors in $f"
+              $errors | ForEach-Object { Write-Host "  $_" }
+              exit 1
+            }
+            Write-Host "$f syntax OK"
+          }
+
   test:
     name: Tests
     runs-on: ubuntu-latest
@@ -61,21 +121,13 @@ jobs:
           # Track heredoc delimiters per opening `cat ... manage.sh <<'TAG'` line so
           # that nested heredocs (or same-named delimiters in a single file) are
           # captured correctly. Strip the cat/EOF wrapper lines from the output.
-          awk '
-            /^[[:space:]]*cat >+"\${INSTALL_DIR}\/manage.sh" <</ {
-              match($0, /<<'\''(MANAGE_[A-Z_]+)'\''$/, m)
-              tag = m[1]
-              print "### " NR ": " $0
-              capturing = 1
-              next
+          # Use perl instead of gawk-only 3-arg match() so this works on mawk.
+          perl -ne '
+            if (/^\s*cat >+"\$\{INSTALL_DIR\}\/manage\.sh" <<'\''(MANAGE_[A-Z_]+)'\''/) {
+              $tag = $1; $capturing = 1; next;
             }
-            capturing && $0 == tag {
-              print "### " NR ": " $0
-              capturing = 0
-              tag = ""
-              next
-            }
-            capturing { print }
+            if ($capturing && $_ eq "$tag\n") { $capturing = 0; $tag = ""; next; }
+            print if $capturing;
           ' setup.sh > /tmp/manage_extracted.sh
           if [[ ! -s /tmp/manage_extracted.sh ]]; then
             echo "::error::manage.sh extraction failed: no content captured from setup.sh heredocs"
@@ -92,9 +144,11 @@ jobs:
       - name: Validate setup.sh syntax
         run: bash -n setup.sh && echo "setup.sh syntax OK"
 
-      - name: Validate docker-compose.yml
+      - name: Validate docker-compose.yml (plex profile)
         run: |
-          # Validate compose template with representative environment variables
+          # Validate compose template with representative environment variables.
+          # Run twice — once with each COMPOSE_PROFILES value — so that
+          # profile-gated services (plex, jellyfin) are also syntax-checked.
           export PUID=1000
           export PGID=1000
           export TZ=UTC
@@ -108,4 +162,26 @@ jobs:
           export DECYPHARR_USER=torbox
           export DECYPHARR_PASS=password
           export PLEX_CLAIM=claim-xxxxx
+          export JELLYFIN_PUBLISHED_URL=http://localhost:8096
+          export COMPOSE_PROFILES=plex
           docker compose config -q
+          echo "docker-compose.yml (plex profile) OK"
+
+      - name: Validate docker-compose.yml (jellyfin profile)
+        run: |
+          export PUID=1000
+          export PGID=1000
+          export TZ=UTC
+          export CONFIG_DIR=/tmp/config
+          export DATA_DIR=/tmp/data
+          export MOUNT_DIR=/tmp/mount
+          export TORBOX_API_KEY=testkey1234567890123456789012345
+          export RADARR_API_KEY=radarrkey12345678901234567890123
+          export SONARR_API_KEY=sonarrkey12345678901234567890123
+          export PROWLARR_API_KEY=prowlarrkey1234567890123456789012
+          export DECYPHARR_USER=torbox
+          export DECYPHARR_PASS=password
+          export JELLYFIN_PUBLISHED_URL=http://localhost:8096
+          export COMPOSE_PROFILES=jellyfin
+          docker compose config -q
+          echo "docker-compose.yml (jellyfin profile) OK"

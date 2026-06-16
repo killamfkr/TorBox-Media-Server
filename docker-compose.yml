@@ -28,8 +28,8 @@ services:
     ports:
       - "127.0.0.1:8282:8282"
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - UMASK=002
     volumes:
       - "${CONFIG_DIR}/decypharr/config.json:/app/config.json"
@@ -39,6 +39,8 @@ services:
       - /dev/fuse:/dev/fuse:rwm
     cap_add:
       - SYS_ADMIN
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8282 || wget -qO- http://localhost:8282 || exit 1"]
       interval: 30s
@@ -69,14 +71,16 @@ services:
     ports:
       - "127.0.0.1:9696:9696"
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+    cap_drop:
+      - ALL
     depends_on:
       byparr:
         condition: service_healthy
@@ -111,7 +115,9 @@ services:
     environment:
       - LOG_LEVEL=info
       - LOG_HTML=false
-      - TZ=${TZ}
+      - TZ=${TZ:-UTC}
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8191"]
       interval: 30s
@@ -135,14 +141,16 @@ services:
     ports:
       - "127.0.0.1:7878:7878"
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+    cap_drop:
+      - ALL
     depends_on:
       decypharr:
         condition: service_healthy
@@ -173,14 +181,16 @@ services:
     ports:
       - "127.0.0.1:8989:8989"
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+    cap_drop:
+      - ALL
     depends_on:
       decypharr:
         condition: service_healthy
@@ -204,14 +214,14 @@ services:
   seerr:
     image: ghcr.io/seerr-team/seerr:v3.2.0
     container_name: seerr
-    user: "${PUID}:${PGID}"
+    user: "${PUID:-1000}:${PGID:-1000}"
     restart: unless-stopped
     networks:
       - media-network
     ports:
       - "127.0.0.1:5055:5055"
     environment:
-      - TZ=${TZ}
+      - TZ=${TZ:-UTC}
     depends_on:
       radarr:
         condition: service_healthy
@@ -222,6 +232,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5055"]
       interval: 30s
@@ -248,11 +260,16 @@ services:
     ports:
       - "127.0.0.1:32400:32400"
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
       - VERSION=docker
       - PLEX_CLAIM=${PLEX_CLAIM:-}
+    cap_drop:
+      - ALL
+    depends_on:
+      decypharr:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:32400/identity"]
       interval: 30s
@@ -290,10 +307,15 @@ services:
       # Uncomment if you configure Jellyfin's built-in HTTPS:
       # - "127.0.0.1:8920:8920"
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-      - JELLYFIN_PublishedServerUrl=http://localhost:8096
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+      - JELLYFIN_PublishedServerUrl=${JELLYFIN_PUBLISHED_URL:-http://localhost:8096}
+    cap_drop:
+      - ALL
+    depends_on:
+      decypharr:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8096/health"]
       interval: 30s

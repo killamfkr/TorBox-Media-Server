@@ -140,7 +140,7 @@ if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
     sudo systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
     sudo systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
     sudo rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-    sudo systemctl daemon-reload
+    sudo systemctl daemon-reload || true
     log_info "Systemd service '${SERVICE_NAME}' removed."
 else
     log_warn "systemd not detected. Skipping service removal."
@@ -179,8 +179,9 @@ if [[ "${INSTALL_DIR}" == *"/torbox-media-server" ]]; then
     rm -rf "${INSTALL_DIR}"
     log_info "Removed: ${INSTALL_DIR}"
 else
+    # Don't abort — fall through to image cleanup so we don't orphan images.
     log_error "Installation directory path is invalid: ${INSTALL_DIR}"
-    exit 1
+    log_error "Skipping file removal. Stop containers and remove ${INSTALL_DIR} manually."
 fi
 
 # Step 6: Optionally remove Docker images

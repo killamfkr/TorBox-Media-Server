@@ -28,11 +28,23 @@ cleanup_on_interrupt() {
     echo ""
     # Kill any background process started by run_with_spinner
     if [[ -n "${SPINNER_PID:-}" ]]; then
+        # Try SIGTERM first to allow the background process to clean up, then SIGKILL
+        kill -TERM "${SPINNER_PID}" 2>/dev/null || true
+        sleep 0.2
         kill -9 "${SPINNER_PID}" 2>/dev/null || true
     fi
     # Remove any leftover spinner temp file from an in-flight background command
     if [[ -n "${SPINNER_TMPFILE:-}" && -e "${SPINNER_TMPFILE}" ]]; then
         rm -f "${SPINNER_TMPFILE}"
+    fi
+    # If containers were already started, stop them BEFORE deleting files to
+    # avoid leaving containers with stale bind mounts pointing at deleted paths.
+    if [[ "${SERVICES_STARTED:-}" == "true" && -f "${COMPOSE_FILE:-}" && -f "${ENV_FILE:-}" ]]; then
+        log_warn "Stopping containers before cleanup..."
+        if [[ ${#COMPOSE_CMD[@]} -eq 0 ]]; then
+            detect_compose_cmd
+        fi
+        (cd "${INSTALL_DIR}" && "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" down --remove-orphans) 2>/dev/null || true
     fi
     # If setup never completed (.env not written), remove partial installation
     if [[ ! -f "${ENV_FILE:-}" && -d "${INSTALL_DIR:-}" ]]; then
@@ -213,6 +225,7 @@ compose_cmd() {
 check_dependencies() {
     log_section "Checking Dependencies"
 
+    local _warn_only="${1:-}"
     local missing=()
 
     if ! command -v docker &>/dev/null; then
@@ -246,6 +259,12 @@ check_dependencies() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         log_warn "Missing dependencies: ${missing[*]}"
         echo ""
+        if [[ "$_warn_only" == "--warn-only" ]]; then
+            # Dry-run mode: do not install anything, just report.
+            log_warn "--dry-run mode: dependencies will not be installed automatically."
+            log_warn "Re-run without --dry-run to install them."
+            return 0
+        fi
         local install_deps="y"
         if [[ "$NON_INTERACTIVE" != "true" ]]; then
             read -rp "Install missing dependencies automatically? [Y/n]: " install_deps
@@ -258,6 +277,12 @@ check_dependencies() {
         fi
     else
         log_info "All dependencies satisfied."
+    fi
+
+    # In dry-run mode, skip the Docker daemon check and group checks — they
+    # would start the daemon, modify group membership, or load kernel modules.
+    if [[ "$_warn_only" == "--warn-only" ]]; then
+        return 0
     fi
 
     # Ensure docker daemon is running (distinguish permission errors from daemon-down)
@@ -574,8 +599,13 @@ gather_config() {
         log_error "Mount path must be an absolute path (start with /). Using default."
         MOUNT_DIR="/mnt/torbox-media"
     fi
-    # Block system directory prefixes
-    for prefix in /etc /usr /var /tmp /proc /sys /dev /boot /sbin /bin /lib /run; do
+    # Reject root itself — chowning "/" would corrupt the entire filesystem
+    if [[ "$MOUNT_DIR" == "/" ]]; then
+        log_error "Mount path cannot be '/'. Using default."
+        MOUNT_DIR="/mnt/torbox-media"
+    fi
+    # Block system directory prefixes (expanded to include user-data dirs)
+    for prefix in /etc /usr /var /tmp /proc /sys /dev /boot /sbin /bin /lib /lib64 /run /home /root /mnt /media /srv /opt /lost+found; do
         if [[ "$MOUNT_DIR" == "$prefix" || "$MOUNT_DIR" == "$prefix"/* ]]; then
             log_error "'${MOUNT_DIR}' is under a system directory. Using default."
             MOUNT_DIR="/mnt/torbox-media"
@@ -585,6 +615,12 @@ gather_config() {
     # Reject unsafe characters in mount path
     if [[ "$MOUNT_DIR" =~ [^a-zA-Z0-9_./-] ]]; then
         log_error "Mount path contains unsafe characters. Using default."
+        MOUNT_DIR="/mnt/torbox-media"
+    fi
+    # Reject if the path is a symlink — prevents `sudo chown` from following
+    # symlinks and chowning an attacker-controlled target directory.
+    if [[ -L "$MOUNT_DIR" ]]; then
+        log_error "Mount path '${MOUNT_DIR}' is a symlink. Using default."
         MOUNT_DIR="/mnt/torbox-media"
     fi
     # Reject mount paths that are inside the installation directory — this would
@@ -954,7 +990,10 @@ create_directories() {
 
     # Create mount point
     sudo mkdir -p "${MOUNT_DIR}"
-    sudo chown "${PUID}:${PGID}" "${MOUNT_DIR}"
+    # Use -h to avoid following symlinks (defense-in-depth; the gather_config
+    # step already rejects symlinked mount paths, but mkdir -p can re-create a
+    # symlink at the path if it was removed between validation and here).
+    sudo chown -h "${PUID}:${PGID}" "${MOUNT_DIR}" 2>/dev/null || sudo chown "${PUID}:${PGID}" "${MOUNT_DIR}"
 
     # Ensure mount point supports shared propagation for rclone FUSE mounts
     log_step "Setting up mount propagation..."
@@ -979,18 +1018,56 @@ create_directories() {
 generate_decypharr_config() {
     log_step "Generating Decypharr configuration..."
 
+    # Validate user-supplied credentials before interpolating them into JSON —
+    # values from DECYPHARR_USER / DECYPHARR_PASS env vars could otherwise
+    # break the JSON document (double quotes, backslashes) or inject fields.
+    DECYPHARR_USER="${DECYPHARR_USER:-torbox}"
+    if [[ ! "$DECYPHARR_USER" =~ ^[a-zA-Z0-9_-]{1,32}$ ]]; then
+        log_warn "DECYPHARR_USER contains characters unsafe for JSON. Using default 'torbox'."
+        DECYPHARR_USER="torbox"
+    fi
+    if [[ -n "${DECYPHARR_PASS:-}" && ! "$DECYPHARR_PASS" =~ ^[a-zA-Z0-9_./+=-]+$ ]]; then
+        log_warn "DECYPHARR_PASS contains characters unsafe for JSON. Regenerating."
+        DECYPHARR_PASS=""
+    fi
+
+    # If a config already exists, refresh the TorBox API key (and creds if known)
+    # instead of skipping — otherwise rotating TORBOX_API_KEY would silently leave
+    # Decypharr using the old key, desynchronizing it from .env and the *arr stack.
     if [[ -f "${CONFIG_DIR}/decypharr/config.json" ]]; then
-        log_info "Decypharr config already exists. Preserving user customizations."
+        if command -v jq &>/dev/null; then
+            local _tmp="${CONFIG_DIR}/decypharr/config.json.tmp.$$"
+            if jq --arg key "${TORBOX_API_KEY}" \
+                  --arg user "${DECYPHARR_USER}" \
+                  --arg pass "${DECYPHARR_PASS:-}" \
+                  '(.debrids[0] // {}).api_key = $key
+                   | if $pass != "" then .password = $pass else . end
+                   | .username = $user' \
+                  "${CONFIG_DIR}/decypharr/config.json" > "$_tmp" 2>/dev/null; then
+                mv "$_tmp" "${CONFIG_DIR}/decypharr/config.json"
+                chmod 600 "${CONFIG_DIR}/decypharr/config.json"
+                log_info "Refreshed TorBox API key in existing Decypharr config (other settings preserved)."
+            else
+                rm -f "$_tmp"
+                log_warn "Could not update existing Decypharr config via jq. Old API key retained."
+            fi
+        else
+            log_warn "jq not available — cannot refresh TorBox API key in existing Decypharr config."
+            log_warn "If you rotated your TorBox key, edit ${CONFIG_DIR}/decypharr/config.json manually."
+        fi
         return 0
     fi
 
-    # Generate credentials for Decypharr web UI
-    DECYPHARR_USER="${DECYPHARR_USER:-torbox}"
     if [[ -z "${DECYPHARR_PASS:-}" ]]; then
         DECYPHARR_PASS="$(openssl rand -base64 12 2>/dev/null | tr -d '/+=' | head -c 12)"
         if [[ -z "$DECYPHARR_PASS" ]]; then
             DECYPHARR_PASS="$(head -c 12 /dev/urandom | base64 | tr -d '/+=' | head -c 12)"
         fi
+    fi
+    # Final length sanity check — empty/truncated password would lock the user out.
+    if [[ -z "$DECYPHARR_PASS" || ${#DECYPHARR_PASS} -lt 8 ]]; then
+        log_error "Failed to generate a sufficient Decypharr password. Ensure openssl or /dev/urandom is available."
+        exit 1
     fi
 
     cat >"${CONFIG_DIR}/decypharr/config.json" <<DECYPHARR_EOF
@@ -1338,7 +1415,8 @@ declare -A SVC_LABELS=(
 # Safely read a value from .env without executing shell code
 env_val() {
     local key="$1"
-    grep "^${key}=" "${ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
+    # Strip inline comments (everything after an unescaped #) and surrounding quotes
+    grep "^${key}=" "${ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/#.*$//' | tr -d '"' | tr -d "'" | tr -d '\r'
 }
 
 COMPOSE_CMD=()
@@ -1558,6 +1636,16 @@ case "${1:-help}" in
         target=""
         if [[ -n "${2:-}" ]]; then
             target="${backups_dir}/${2}"
+            # Resolve and verify the target is under backups_dir to prevent
+            # path traversal (e.g. `./manage.sh restore ../../../etc`).
+            target="$(realpath -m "${target}" 2>/dev/null || echo "${target}")"
+            case "${target}" in
+                "${backups_dir}"/*) ;;
+                *)
+                    echo -e "${RED}Invalid backup selection.${NC}"
+                    exit 1
+                    ;;
+            esac
         else
             # List available backups and let user choose
             echo -e "${CYAN}Available backups:${NC}"
@@ -2308,8 +2396,17 @@ configure_plex_libraries() {
 
     # Remove expired claim token from .env (token expires in 4 min and is single-use)
     if [[ -f "${ENV_FILE}" ]]; then
-        grep -v '^PLEX_CLAIM=' "${ENV_FILE}" >"${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "${ENV_FILE}" || true
-        log_info "  Plex claim token removed from .env (expired after first use)."
+        # Use a temp file and explicitly restore 600 perms — the grep+mv pattern
+        # would otherwise inherit the default umask (typically 644), leaking
+        # every secret in .env (TORBOX_API_KEY, *_ADMIN_PASS, DECYPHARR_PASS).
+        grep -v '^PLEX_CLAIM=' "${ENV_FILE}" >"${ENV_FILE}.tmp" 2>/dev/null
+        if [[ -s "${ENV_FILE}.tmp" ]]; then
+            mv "${ENV_FILE}.tmp" "${ENV_FILE}"
+            chmod 600 "${ENV_FILE}"
+            log_info "  Plex claim token removed from .env (expired after first use)."
+        else
+            rm -f "${ENV_FILE}.tmp"
+        fi
     fi
 }
 
@@ -2330,8 +2427,12 @@ add_default_indexer() {
         return 0
     fi
 
-    # Add default public indexer (configurable URL)
+    # Add default public indexer (configurable URL, validated to prevent JSON injection)
     local indexer_url="${TORBOX_INDEXER_URL:-https://1337x.to}"
+    if [[ ! "$indexer_url" =~ ^https?://[a-zA-Z0-9._:/-]+$ ]]; then
+        log_warn "TORBOX_INDEXER_URL has invalid format (must start with http(s):// and contain only safe chars). Using default."
+        indexer_url="https://1337x.to"
+    fi
     curl -sf --connect-timeout 5 --max-time 15 -X POST \
         -H "Content-Type: application/json" \
         -H "X-Api-Key: ${PROWLARR_API_KEY}" \
@@ -2821,12 +2922,37 @@ check_existing_installation() {
         fi
         echo ""
     elif [[ -f "${ENV_FILE}" && ! -f "${SETUP_COMPLETE_FILE}" ]]; then
-        # .env exists but .setup_complete doesn't — previous run was interrupted
+        # .env exists but .setup_complete doesn't — previous run was interrupted.
+        # In interactive mode, ask the user what to do; in non-interactive mode,
+        # default to a fresh install (preserves prior behavior).
         log_section "Incomplete Installation Detected"
         log_warn "A previous setup was interrupted before completion."
-        log_warn "Starting fresh (incomplete state will be cleaned up)."
+        local fresh_install="y"
+        if [[ "$NON_INTERACTIVE" != "true" ]]; then
+            read -rp "Start fresh (deletes partial install)? [Y/n]: " fresh_install
+        fi
+        if [[ "${fresh_install,,}" != "n" ]]; then
+            log_warn "Starting fresh (incomplete state will be cleaned up)."
+            rm -rf "${INSTALL_DIR}"
+        else
+            log_info "Keeping partial install. Re-run will attempt to continue from generated configs."
+            # Treat the existing .env as the source of truth so re-generated
+            # configs use the same API keys / admin creds as the partial install.
+            EXISTING_TORBOX_API_KEY=$(grep '^TORBOX_API_KEY=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_RADARR_API_KEY=$(grep '^RADARR_API_KEY=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_SONARR_API_KEY=$(grep '^SONARR_API_KEY=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_PROWLARR_API_KEY=$(grep '^PROWLARR_API_KEY=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_RADARR_ADMIN_USER=$(grep '^RADARR_ADMIN_USER=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_RADARR_ADMIN_PASS=$(grep '^RADARR_ADMIN_PASS=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_SONARR_ADMIN_USER=$(grep '^SONARR_ADMIN_USER=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_SONARR_ADMIN_PASS=$(grep '^SONARR_ADMIN_PASS=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_PROWLARR_ADMIN_USER=$(grep '^PROWLARR_ADMIN_USER=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_PROWLARR_ADMIN_PASS=$(grep '^PROWLARR_ADMIN_PASS=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            EXISTING_COMPOSE_PROFILES=$(grep '^COMPOSE_PROFILES=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'") || true
+            DECYPHARR_USER=$(grep "^DECYPHARR_USER=" "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d "\"" | tr -d "'") || true
+            DECYPHARR_PASS=$(grep "^DECYPHARR_PASS=" "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d "\"" | tr -d "'") || true
+        fi
         echo ""
-        rm -rf "${INSTALL_DIR}"
     fi
 }
 
@@ -2846,7 +2972,11 @@ start_services() {
         if ! compose_cmd up -d --remove-orphans; then
             log_error "Failed to start services. Check your internet connection and disk space."
             log_error "Try running: cd ${INSTALL_DIR} && docker compose --env-file .env -f docker-compose.yml up -d"
-            return 0
+            # Return non-zero so main() knows services didn't start — configs are
+            # already written, so we DO want .setup_complete to be touched (the
+            # install is structurally complete), but we should not silently
+            # pretend the services are up.
+            return 1
         fi
         echo ""
         log_info "All services starting! Give them 30-60 seconds to initialize."
@@ -2913,7 +3043,11 @@ main() {
 
     print_banner
     check_existing_installation
-    check_dependencies
+    if [[ "$DRY_RUN" == "true" ]]; then
+        check_dependencies --warn-only
+    else
+        check_dependencies
+    fi
     gather_config
     check_port_conflicts
 
@@ -2969,7 +3103,14 @@ main() {
         sudo chown -R "${PUID}:${PGID}" "${CONFIG_DIR}" "${DATA_DIR}"
     fi
 
-    start_services
+    # start_services may fail (e.g. docker daemon down, port conflict). Don't
+    # abort the whole setup — configs are already written, so we still mark the
+    # install complete and let the user start services manually via manage.sh.
+    # However, log a clear warning so the user knows the install is incomplete.
+    if ! start_services; then
+        log_warn "Services failed to start. Configs are saved — resolve the error above,"
+        log_warn "then run: cd ${INSTALL_DIR} && ./manage.sh start"
+    fi
     if [[ "$SERVICES_STARTED" == "true" ]]; then
         configure_arrs
     fi

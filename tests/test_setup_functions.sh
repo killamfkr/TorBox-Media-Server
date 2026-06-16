@@ -633,5 +633,205 @@ echo "--- .gitignore validation tests ---"
 test_gitignore_no_markdown_fences
 test_gitignore_starts_with_comment
 
+echo ""
+echo "--- Code review fix tests ---"
+
+test_mount_path_blocks_home_root_mnt() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    # Critical fix: mount path validation must block /home, /root, /mnt, /media, /srv, /opt
+    if grep -q '/home /root /mnt /media /srv /opt' "$setup_file"; then
+        pass "Mount path validation blocks /home, /root, /mnt, /media, /srv, /opt"
+    else
+        fail "Mount path validation missing critical prefixes"
+    fi
+}
+
+test_mount_path_rejects_root_slash() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -q "Mount path cannot be '/'" "$setup_file"; then
+        pass "Root path '/' explicitly rejected"
+    else
+        fail "Root path rejection missing"
+    fi
+}
+
+test_mount_path_rejects_symlink() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -q "is a symlink" "$setup_file"; then
+        pass "Symlinked mount paths are rejected"
+    else
+        fail "Symlink rejection missing"
+    fi
+}
+
+test_chown_h_used_for_mount() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -q 'sudo chown -h' "$setup_file"; then
+        pass "chown -h is used (defense-in-depth against symlinks)"
+    else
+        fail "chown -h missing"
+    fi
+}
+
+test_interrupt_cleanup_stops_containers() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -q 'Stopping containers before cleanup' "$setup_file"; then
+        pass "Interrupt cleanup stops containers before deleting files"
+    else
+        fail "Container stop on interrupt missing"
+    fi
+}
+
+test_env_perms_restored_after_plex_claim_removal() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    # The grep+mv pattern would otherwise inherit umask (644) and leak secrets.
+    if grep -A 12 'Remove expired claim token' "$setup_file" | grep -q 'chmod 600'; then
+        pass ".env permissions restored after PLEX_CLAIM removal"
+    else
+        fail ".env chmod 600 missing after PLEX_CLAIM removal"
+    fi
+}
+
+test_decypharr_config_refreshed_on_rerun() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -q 'Refreshed TorBox API key in existing Decypharr config' "$setup_file"; then
+        pass "Decypharr config refreshed on re-run (no stale API key)"
+    else
+        fail "Decypharr config refresh missing"
+    fi
+}
+
+test_torbox_indexer_url_validated() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -q 'TORBOX_INDEXER_URL has invalid format' "$setup_file"; then
+        pass "TORBOX_INDEXER_URL is validated before JSON interpolation"
+    else
+        fail "TORBOX_INDEXER_URL validation missing"
+    fi
+}
+
+test_start_services_returns_nonzero_on_failure() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -A 10 'Failed to start services' "$setup_file" | grep -q 'return 1'; then
+        pass "start_services returns 1 on failure (no silent success)"
+    else
+        fail "start_services still returns 0 on failure"
+    fi
+}
+
+test_compose_has_cap_drop_on_all_services() {
+    local compose_file="${SCRIPT_DIR}/../docker-compose.yml"
+    local count
+    count=$(grep -c 'cap_drop:' "$compose_file")
+    if [[ $count -eq 8 ]]; then
+        pass "All 8 services have cap_drop directive"
+    else
+        fail "Expected 8 cap_drop entries, found $count"
+    fi
+}
+
+test_compose_media_servers_depend_on_decypharr() {
+    local compose_file="${SCRIPT_DIR}/../docker-compose.yml"
+    local plex_dep jellyfin_dep
+    plex_dep=$(grep -A 25 '^  plex:' "$compose_file" | grep -c 'decypharr')
+    jellyfin_dep=$(grep -A 25 '^  jellyfin:' "$compose_file" | grep -c 'decypharr')
+    if [[ $plex_dep -gt 0 && $jellyfin_dep -gt 0 ]]; then
+        pass "Plex and Jellyfin depend on Decypharr"
+    else
+        fail "Media server depends_on missing (plex=$plex_dep, jellyfin=$jellyfin_dep)"
+    fi
+}
+
+test_compose_env_vars_have_defaults() {
+    local compose_file="${SCRIPT_DIR}/../docker-compose.yml"
+    # No bare ${PUID} without :- default (check for the pattern PUID=${PUID} without :-)
+    local bare_count
+    bare_count=$(grep -cE 'PUID=[$][{]PUID[}]|PGID=[$][{]PGID[}]|TZ=[$][{]TZ[}]' "$compose_file" || true)
+    bare_count=${bare_count:-0}
+    if [[ "$bare_count" -eq 0 ]]; then
+        pass "All env vars have defaults"
+    else
+        fail "Found $bare_count env vars without defaults"
+    fi
+}
+
+test_gitignore_has_backup_patterns() {
+    local gitignore="${SCRIPT_DIR}/../.gitignore"
+    if grep -q '^backups/$' "$gitignore" && \
+       grep -q 'torbox_backup_' "$gitignore" && \
+       grep -q '[*][.]bak' "$gitignore"; then
+        pass ".gitignore covers backups/, torbox_backup_*/, *.bak"
+    else
+        fail ".gitignore missing backup patterns"
+    fi
+}
+
+test_lint_yml_has_powershell_job() {
+    local lint_file="${SCRIPT_DIR}/../.github/workflows/lint.yml"
+    if grep -q 'powershell-lint' "$lint_file" && \
+       grep -q 'PSScriptAnalyzer' "$lint_file"; then
+        pass "lint.yml has PowerShell linting job"
+    else
+        fail "PSScriptAnalyzer job missing"
+    fi
+}
+
+test_lint_yml_tests_both_profiles() {
+    local lint_file="${SCRIPT_DIR}/../.github/workflows/lint.yml"
+    if grep -q 'COMPOSE_PROFILES=plex' "$lint_file" && \
+       grep -q 'COMPOSE_PROFILES=jellyfin' "$lint_file"; then
+        pass "lint.yml validates both plex and jellyfin profiles"
+    else
+        fail "Profile-based compose validation missing"
+    fi
+}
+
+test_check_dependencies_warn_only_mode() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -q -- '--warn-only' "$setup_file"; then
+        pass "check_dependencies supports --warn-only for dry-run mode"
+    else
+        fail "--warn-only mode missing"
+    fi
+}
+
+test_env_val_strips_inline_comments() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    # Look for the sed expression that strips inline comments (s/#.*$//)
+    if grep -A 4 'env_val()' "$setup_file" | grep -q 's/#'; then
+        pass "env_val strips inline comments"
+    else
+        fail "env_val still includes inline comments"
+    fi
+}
+
+test_manage_sh_restore_prevents_path_traversal() {
+    local setup_file="${SCRIPT_DIR}/../setup.sh"
+    if grep -B 2 -A 4 'realpath -m' "$setup_file" | grep -q 'backups_dir'; then
+        pass "manage.sh restore prevents path traversal"
+    else
+        fail "Path traversal prevention missing"
+    fi
+}
+
+test_mount_path_blocks_home_root_mnt
+test_mount_path_rejects_root_slash
+test_mount_path_rejects_symlink
+test_chown_h_used_for_mount
+test_interrupt_cleanup_stops_containers
+test_env_perms_restored_after_plex_claim_removal
+test_decypharr_config_refreshed_on_rerun
+test_torbox_indexer_url_validated
+test_start_services_returns_nonzero_on_failure
+test_compose_has_cap_drop_on_all_services
+test_compose_media_servers_depend_on_decypharr
+test_compose_env_vars_have_defaults
+test_gitignore_has_backup_patterns
+test_lint_yml_has_powershell_job
+test_lint_yml_tests_both_profiles
+test_check_dependencies_warn_only_mode
+test_env_val_strips_inline_comments
+test_manage_sh_restore_prevents_path_traversal
+
 print_summary
 exit $?

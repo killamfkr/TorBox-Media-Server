@@ -7,6 +7,12 @@ docker-compose.override.yml
 docker-compose.override.yaml
 torbox-media-server/
 
+# Backups (created by manage.sh `backup` and uninstall scripts)
+backups/
+torbox_backup_*/
+*.bak
+*.bak.*
+
 # Logs and temp files
 *.log
 *.tmp

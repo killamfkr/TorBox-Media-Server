@@ -72,6 +72,90 @@ function Write-TextFile ($Path, $Content) {
     [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
 }
 
+function ConvertTo-IanaTimezone {
+    # Map a Windows timezone ID (e.g. "Pacific Standard Time") to its IANA
+    # equivalent (e.g. "America/Los_Angeles"). Linux containers expect IANA
+    # names — the *arr apps (.NET on Linux) will fall back to UTC or throw if
+    # given a Windows TZ ID.
+    param([string]$WindowsTzId)
+
+    if ([string]::IsNullOrEmpty($WindowsTzId)) { return "UTC" }
+
+    # Use the cross-platform Unicode CLDR mapping that ships with .NET.
+    # .NET's TimeZoneInfo knows the IANA alias for each Windows zone on Linux/Mac,
+    # but on Windows PowerShell 5.1 we need a lookup table for the common cases.
+    $map = @{
+        'UTC' = 'UTC'
+        'GMT Standard Time' = 'Europe/London'
+        'Romance Standard Time' = 'Europe/Paris'
+        'W. Europe Standard Time' = 'Europe/Berlin'
+        'Central Europe Standard Time' = 'Europe/Budapest'
+        'E. Europe Standard Time' = 'Europe/Chisinau'
+        'Jordan Standard Time' = 'Asia/Amman'
+        'Middle East Standard Time' = 'Asia/Beirut'
+        'Egypt Standard Time' = 'Africa/Cairo'
+        'South Africa Standard Time' = 'Africa/Johannesburg'
+        'Israel Standard Time' = 'Asia/Jerusalem'
+        'Arabic Standard Time' = 'Asia/Riyadh'
+        'Arab Standard Time' = 'Asia/Riyadh'
+        'Arabian Standard Time' = 'Asia/Dubai'
+        'Iran Standard Time' = 'Asia/Tehran'
+        'Pakistan Standard Time' = 'Asia/Karachi'
+        'India Standard Time' = 'Asia/Kolkata'
+        'Sri Lanka Standard Time' = 'Asia/Colombo'
+        'Nepal Standard Time' = 'Asia/Kathmandu'
+        'Bangladesh Standard Time' = 'Asia/Dhaka'
+        'SE Asia Standard Time' = 'Asia/Bangkok'
+        'Singapore Standard Time' = 'Asia/Singapore'
+        'China Standard Time' = 'Asia/Shanghai'
+        'Taipei Standard Time' = 'Asia/Taipei'
+        'Tokyo Standard Time' = 'Asia/Tokyo'
+        'Korea Standard Time' = 'Asia/Seoul'
+        'AUS Eastern Standard Time' = 'Australia/Sydney'
+        'E. Australia Standard Time' = 'Australia/Brisbane'
+        'Cen. Australia Standard Time' = 'Australia/Adelaide'
+        'W. Australia Standard Time' = 'Australia/Perth'
+        'New Zealand Standard Time' = 'Pacific/Auckland'
+        'Hawaiian Standard Time' = 'Pacific/Honolulu'
+        'Alaskan Standard Time' = 'America/Anchorage'
+        'Pacific Standard Time' = 'America/Los_Angeles'
+        'US Mountain Standard Time' = 'America/Phoenix'
+        'Mountain Standard Time' = 'America/Denver'
+        'Central Standard Time' = 'America/Chicago'
+        'Eastern Standard Time' = 'America/New_York'
+        'US Eastern Standard Time' = 'America/Indiana/Indianapolis'
+        'Atlantic Standard Time' = 'America/Halifax'
+        'Newfoundland Standard Time' = 'America/St_Johns'
+        'Greenland Standard Time' = 'America/Godthab'
+        'Azores Standard Time' = 'Atlantic/Azores'
+        'Cape Verde Standard Time' = 'Atlantic/Cape_Verde'
+        'Argentina Standard Time' = 'America/Argentina/Buenos_Aires'
+        'SA Pacific Standard Time' = 'America/Bogota'
+        'SA Western Standard Time' = 'America/La_Paz'
+        'Pacific SA Standard Time' = 'America/Santiago'
+        'E. South America Standard Time' = 'America/Sao_Paulo'
+    }
+    if ($map.ContainsKey($WindowsTzId)) {
+        return $map[$WindowsTzId]
+    }
+    # Fall back to UTC if unknown — better than passing an invalid ID to .NET.
+    Write-LogWarn "Could not map Windows timezone '$WindowsTzId' to IANA. Using UTC."
+    return "UTC"
+}
+
+# Restrict NTFS ACLs on a sensitive file so only the current user can read/write it.
+# By default, files created under the user profile inherit read access for local
+# Users/Authenticated Users, which would leak .env / config.json secrets to any
+# other local account. This mirrors `chmod 600` on Linux.
+function Lock-FileAcl ($Path) {
+    if (-not (Test-Path $Path)) { return }
+    try {
+        icacls $Path /inheritance:r /grant:r "$($env:USERNAME):(F)" 2>&1 | Out-Null
+    } catch {
+        Write-LogWarn "Could not lock ACLs on $Path — file may be readable by other users."
+    }
+}
+
 # Parse a KEY=value .env file into a hashtable. Used to preserve existing
 # API keys / credentials across re-runs so integrations don't break.
 function Read-EnvFile ($Path) {
@@ -313,7 +397,10 @@ function Invoke-GatherConfig {
 
     $global:PUID = 1000
     $global:PGID = 1000
-    $global:TZ = [System.TimeZoneInfo]::Local.Id
+    # Convert the Windows timezone ID to an IANA name — Linux containers (and
+    # .NET-on-Linux apps like Radarr/Sonarr) only understand IANA names. Without
+    # this, the *arr apps would silently fall back to UTC.
+    $global:TZ = ConvertTo-IanaTimezone ([System.TimeZoneInfo]::Local.Id)
 
     # Preserve existing keys/credentials across re-runs; only generate when absent.
     $global:RadarrApiKey = Get-OrNew 'RADARR_API_KEY' { New-ApiKey }
@@ -359,46 +446,75 @@ function Invoke-CreateDirectories {
 
 function Invoke-GenerateDecypharrConfig {
     Write-LogStep "Generating Decypharr config..."
+
+    # Validate user-supplied credentials before interpolating into JSON — env
+    # vars could otherwise break the JSON document (double quotes, backslashes).
+    if (-not ($global:DecypharrUser -match '^[a-zA-Z0-9_-]{1,32}$')) {
+        Write-LogWarn "DECYPHARR_USER contains characters unsafe for JSON. Using default 'torbox'."
+        $global:DecypharrUser = "torbox"
+    }
+    if (-not [string]::IsNullOrEmpty($global:DecypharrPass) -and
+        -not ($global:DecypharrPass -match '^[a-zA-Z0-9_./+=-]+$')) {
+        Write-LogWarn "DECYPHARR_PASS contains characters unsafe for JSON. Regenerating."
+        $global:DecypharrPass = New-AdminPass
+    }
+
+    # If a config already exists, refresh the TorBox API key instead of
+    # skipping — otherwise rotating TORBOX_API_KEY would silently leave
+    # Decypharr using the old key, desynchronizing it from .env.
+    $decypharrConfigPath = "$ConfigDir\decypharr\config.json"
+    if (Test-Path $decypharrConfigPath) {
+        try {
+            $cfg = Get-Content $decypharrConfigPath -Raw | ConvertFrom-Json
+            if ($cfg.debrids -and $cfg.debrids.Count -gt 0) {
+                $cfg.debrids[0].api_key = $global:TorboxApiKey
+            }
+            $cfg.username = $global:DecypharrUser
+            if (-not [string]::IsNullOrEmpty($global:DecypharrPass)) {
+                $cfg.password = $global:DecypharrPass
+            }
+            Write-TextFile -Path $decypharrConfigPath -Content ($cfg | ConvertTo-Json -Depth 10)
+            Lock-FileAcl $decypharrConfigPath
+            Write-LogInfo "Refreshed TorBox API key in existing Decypharr config."
+            return
+        } catch {
+            Write-LogWarn "Could not update existing Decypharr config via JSON parse: $($_.Exception.Message)"
+            Write-LogWarn "Old API key may be retained. Edit $decypharrConfigPath manually if needed."
+            return
+        }
+    }
+
+    # Generate a fresh config matching setup.sh's schema (debrids[] array,
+    # rclone mount, qbittorrent categories, top-level username/password).
+    # This must match setup.sh so both platforms produce a working Decypharr v2.0
+    # config — diverging schemas caused broken qBittorrent mocks on one platform.
     $configJson = @"
 {
-  "log_level": "info",
-  "log_timestamps": true,
-  "web_server": {
-    "host": "0.0.0.0",
-    "port": 8282
-  },
+  "debrids": [
+    {
+      "name": "torbox",
+      "api_key": "$($global:TorboxApiKey)",
+      "folder": "/mnt/remote/torbox/__all__",
+      "rate_limit": "55/hour",
+      "use_webdav": true
+    }
+  ],
   "rclone": {
-    "vfs_cache_mode": "full",
-    "vfs_cache_max_size": "20G",
-    "vfs_read_chunk_size": "128M",
-    "vfs_read_chunk_size_limit": "2G",
-    "vfs_read_ahead": "256M",
-    "dir_cache_time": "1m",
-    "read_only": true,
-    "allow_other": true,
-    "uid": $($global:PUID),
-    "gid": $($global:PGID),
-    "umask": "022",
-    "no_modtime": true,
-    "poll_interval": "1m",
-    "buffer_size": "256M"
-  },
-  "torbox": {
-    "api_key": "$($global:TorboxApiKey)"
-  },
-  "webdav": {
     "enabled": true,
-    "port": 8383,
-    "users": [
-      {
-        "username": "$($global:DecypharrUser)",
-        "password": "$($global:DecypharrPass)"
-      }
-    ]
-  }
+    "mount_path": "/mnt/remote"
+  },
+  "qbittorrent": {
+    "download_folder": "/data/downloads/",
+    "categories": ["sonarr", "radarr"]
+  },
+  "username": "$($global:DecypharrUser)",
+  "password": "$($global:DecypharrPass)",
+  "port": "8282",
+  "log_level": "info"
 }
 "@
-    Write-TextFile -Path "$ConfigDir\decypharr\config.json" -Content $configJson
+    Write-TextFile -Path $decypharrConfigPath -Content $configJson
+    Lock-FileAcl $decypharrConfigPath
 }
 
 function Invoke-GenerateArrConfigs {
@@ -424,6 +540,7 @@ function Invoke-GenerateArrConfigs {
 </Config>
 "@
         Write-TextFile -Path "$ConfigDir\$name\config.xml" -Content $configXml
+        Lock-FileAcl "$ConfigDir\$name\config.xml"
     }
 }
 
@@ -459,6 +576,12 @@ function Invoke-GenerateDockerCompose {
 function Invoke-GenerateEnvFile {
     Write-LogStep "Generating .env file..."
 
+    # Escape backslashes in MOUNT_DIR so consumers that interpret backslash
+    # escapes (e.g. YAML, JSON, .env loaders) don't turn \t into a tab or \n
+    # into a newline. Forward slashes work fine on Windows for Docker Compose
+    # volume mounts, so we normalize to those.
+    $mountDirEscaped = $global:MountDir -replace '\\', '/'
+
     $envContent = @"
 # ============================================================================
 #  TorBox Media Server - Environment Configuration
@@ -473,7 +596,7 @@ TZ=$($global:TZ)
 INSTALL_DIR=$InstallDir
 CONFIG_DIR=$ConfigDir
 DATA_DIR=$DataDir
-MOUNT_DIR=$global:MountDir
+MOUNT_DIR=$mountDirEscaped
 
 # Core Credentials
 TORBOX_API_KEY=$global:TorboxApiKey
@@ -506,6 +629,9 @@ COMPOSE_PROFILES=$global:MediaServer
     }
 
     Write-TextFile -Path $EnvFile -Content ($envContent + "`n")
+    # Restrict ACLs to the current user only — .env contains TORBOX_API_KEY,
+    # *_ADMIN_PASS, and DECYPHARR_PASS. Without this, any local user could read it.
+    Lock-FileAcl $EnvFile
 }
 
 function Invoke-StartServices {
