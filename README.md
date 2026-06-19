@@ -35,6 +35,22 @@ TORBOX_API_KEY="your-api-key" TORBOX_MEDIA_SERVER="plex" ./setup.sh --yes
 
 Run `./setup.sh --help` for all available options.
 
+### CasaOS (Ubuntu)
+
+SSH into your CasaOS box and run (replace `your-api-key` with your [TorBox API key](https://torbox.app/settings)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nordicnode/TorBox-Media-Server/main/install-casaos.sh | TORBOX_API_KEY="your-api-key" bash
+```
+
+For an interactive install (prompts for API key and options):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nordicnode/TorBox-Media-Server/main/install-casaos.sh | bash
+```
+
+CasaOS already includes Docker, so the installer only clones the repo under `/DATA/AppData/torbox-media-server` and runs `setup.sh`. Media mount defaults to `/DATA/Media/torbox-media`. Manage the stack after install with `cd /DATA/AppData/torbox-media-server/torbox-media-server && ./manage.sh`.
+
 ### Windows
 
 Open **PowerShell** as **Administrator** and run:
@@ -61,6 +77,7 @@ Run `.\setup.ps1 --help` for all available options.
 
 ## 📑 Table of Contents
 
+- [CasaOS (Ubuntu)](#casaos-ubuntu)
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [Components](#components)
