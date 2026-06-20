@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # CasaOS / Ubuntu one-liner bootstrap for TorBox Media Server.
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/nordicnode/TorBox-Media-Server/main/install-casaos.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/killamfkr/TorBox-Media-Server/main/install-casaos.sh | bash
 #   curl -fsSL .../install-casaos.sh | TORBOX_API_KEY="your-key" bash
 set -euo pipefail
 
-REPO_URL="${TORBOX_REPO_URL:-https://github.com/nordicnode/TorBox-Media-Server.git}"
+REPO_URL="${TORBOX_REPO_URL:-https://github.com/killamfkr/TorBox-Media-Server.git}"
 CLONE_DIR="${TORBOX_CASAOS_DIR:-/DATA/AppData/torbox-media-server}"
 export TORBOX_MOUNT_DIR="${TORBOX_MOUNT_DIR:-/DATA/Media/torbox-media}"
 
