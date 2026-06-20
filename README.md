@@ -530,6 +530,25 @@ The following environment variables can be set before running `./setup.sh --yes`
 | `TORBOX_MOUNT_DIR` | `/mnt/torbox-media` | Custom mount directory for rclone FUSE mount |
 | `TORBOX_HW_ACCEL` | *(auto-detected)* | Hardware acceleration: `none`, `intel`, `amd`, or `nvidia` |
 | `TORBOX_INDEXER_URL` | `https://1337x.to` | Custom Prowlarr default indexer URL |
+| `TORBOX_INSTALL_DIR` | `<repo>/torbox-media-server` | Custom install directory (used by CasaOS installer) |
+| `TORBOX_CASAOS` | `false` | Set `true` when installing on CasaOS |
+
+### CasaOS: install seemed to work but nothing runs
+
+1. **Check containers are actually up:**
+   ```bash
+   cd /DATA/AppData/torbox-media-server && ./manage.sh status
+   docker ps
+   ```
+2. **If `manage.sh` is missing**, setup never finished — re-run with your API key:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/killamfkr/TorBox-Media-Server/main/install-casaos.sh | TORBOX_API_KEY="your-key" bash
+   ```
+3. **Open services by IP, not localhost** — from another device use `http://YOUR-CASAOS-IP:5055` (Seerr), not `localhost`.
+4. **View logs** if a container keeps restarting:
+   ```bash
+   cd /DATA/AppData/torbox-media-server && ./manage.sh logs decypharr
+   ```
 
 ---
 

@@ -63,7 +63,7 @@ cleanup_on_interrupt() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${SCRIPT_DIR}/torbox-media-server"
+INSTALL_DIR="${TORBOX_INSTALL_DIR:-${SCRIPT_DIR}/torbox-media-server}"
 CONFIG_DIR="${INSTALL_DIR}/configs"
 DATA_DIR="${INSTALL_DIR}/data"
 MOUNT_DIR="/mnt/torbox-media"
@@ -3018,6 +3018,8 @@ main() {
                 echo "  TORBOX_MOUNT_DIR      Mount directory (default: /mnt/torbox-media)"
                 echo "  TORBOX_HW_ACCEL       'intel', 'nvidia', 'amd', or 'none' (auto-detects if unset)"
                 echo "  TORBOX_START_SERVICES 'true' or 'false' (default: true)"
+                echo "  TORBOX_INSTALL_DIR    Custom install path (default: <repo>/torbox-media-server)"
+                echo "  TORBOX_CASAOS         'true' when installing on CasaOS"
                 exit 0
                 ;;
             -v | --version)
