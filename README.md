@@ -563,6 +563,12 @@ The following environment variables can be set before running `./setup.sh --yes`
    ```bash
    cd /DATA/AppData/torbox-media-server && ./manage.sh logs decypharr
    ```
+5. **`.env` parse error with `\x1b`** — older setup wrote log lines into `.env`. Fix in place:
+   ```bash
+   grep -v $'\x1b' /DATA/AppData/torbox-media-server/.env > /tmp/torbox.env && mv /tmp/torbox.env /DATA/AppData/torbox-media-server/.env
+   cd /DATA/AppData/torbox-media-server && ./manage.sh restart
+   ```
+   Or re-run the curl installer (it auto-repairs `.env` now).
 
 ---
 

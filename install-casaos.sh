@@ -60,6 +60,17 @@ ensure_docker() {
     exit 1
 }
 
+repair_env_file() {
+    local env="${INSTALL_DIR}/.env"
+    [[ -f "$env" ]] || return 0
+    if grep -q $'\x1b' "$env" 2>/dev/null; then
+        log "Repairing corrupted .env (removing log lines written by older setup.sh)..."
+        LC_ALL=C grep -v $'\x1b' "$env" >"${env}.repair"
+        mv "${env}.repair" "$env"
+        chmod 600 "$env"
+    fi
+}
+
 apply_casaos_compose_fixes() {
     local compose="${INSTALL_DIR}/docker-compose.yml"
     [[ -f "$compose" ]] || return 0
@@ -172,6 +183,7 @@ if ! ./setup.sh --yes "$@"; then
 fi
 
 apply_casaos_compose_fixes
+repair_env_file
 
 if [[ -x "${INSTALL_DIR}/manage.sh" ]]; then
     log "Restarting services with CasaOS network settings..."

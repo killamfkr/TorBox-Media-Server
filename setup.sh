@@ -131,14 +131,14 @@ EOF
     echo -e "${NC}"
 }
 
-log_info() { echo -e "${GREEN}[INFO]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
-log_step() { echo -e "${BLUE}[STEP]${NC} ${BOLD}$*${NC}"; }
+log_info() { echo -e "${GREEN}[INFO]${NC} $*" >&2; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_step() { echo -e "${BLUE}[STEP]${NC} ${BOLD}$*${NC}" >&2; }
 log_section() {
-    echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}  $*${NC}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
+    echo -e "${CYAN}  $*${NC}" >&2
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n" >&2
 }
 mask_key() {
     local k="$1"
@@ -1255,31 +1255,41 @@ ENV_EOF
         if [[ -n "${EXISTING_RADARR_ADMIN_USER:-}" && -n "${EXISTING_RADARR_ADMIN_PASS:-}" ]]; then
             echo "RADARR_ADMIN_USER=\"${EXISTING_RADARR_ADMIN_USER}\""
             echo "RADARR_ADMIN_PASS=\"${EXISTING_RADARR_ADMIN_PASS}\""
-            log_info "  Preserved existing Radarr admin credentials."
         else
             echo "RADARR_ADMIN_USER=\"${RADARR_ADMIN_USER}\""
             echo "RADARR_ADMIN_PASS=\"${RADARR_ADMIN_PASS}\""
-            log_info "  Generated new Radarr admin credentials."
         fi
         if [[ -n "${EXISTING_SONARR_ADMIN_USER:-}" && -n "${EXISTING_SONARR_ADMIN_PASS:-}" ]]; then
             echo "SONARR_ADMIN_USER=\"${EXISTING_SONARR_ADMIN_USER}\""
             echo "SONARR_ADMIN_PASS=\"${EXISTING_SONARR_ADMIN_PASS}\""
-            log_info "  Preserved existing Sonarr admin credentials."
         else
             echo "SONARR_ADMIN_USER=\"${SONARR_ADMIN_USER}\""
             echo "SONARR_ADMIN_PASS=\"${SONARR_ADMIN_PASS}\""
-            log_info "  Generated new Sonarr admin credentials."
         fi
         if [[ -n "${EXISTING_PROWLARR_ADMIN_USER:-}" && -n "${EXISTING_PROWLARR_ADMIN_PASS:-}" ]]; then
             echo "PROWLARR_ADMIN_USER=\"${EXISTING_PROWLARR_ADMIN_USER}\""
             echo "PROWLARR_ADMIN_PASS=\"${EXISTING_PROWLARR_ADMIN_PASS}\""
-            log_info "  Preserved existing Prowlarr admin credentials."
         else
             echo "PROWLARR_ADMIN_USER=\"${PROWLARR_ADMIN_USER}\""
             echo "PROWLARR_ADMIN_PASS=\"${PROWLARR_ADMIN_PASS}\""
-            log_info "  Generated new Prowlarr admin credentials."
         fi
     } >>"${ENV_FILE}"
+
+    if [[ -n "${EXISTING_RADARR_ADMIN_USER:-}" && -n "${EXISTING_RADARR_ADMIN_PASS:-}" ]]; then
+        log_info "  Preserved existing Radarr admin credentials."
+    else
+        log_info "  Generated new Radarr admin credentials."
+    fi
+    if [[ -n "${EXISTING_SONARR_ADMIN_USER:-}" && -n "${EXISTING_SONARR_ADMIN_PASS:-}" ]]; then
+        log_info "  Preserved existing Sonarr admin credentials."
+    else
+        log_info "  Generated new Sonarr admin credentials."
+    fi
+    if [[ -n "${EXISTING_PROWLARR_ADMIN_USER:-}" && -n "${EXISTING_PROWLARR_ADMIN_PASS:-}" ]]; then
+        log_info "  Preserved existing Prowlarr admin credentials."
+    else
+        log_info "  Generated new Prowlarr admin credentials."
+    fi
 
     chmod 600 "${ENV_FILE}"
     log_info "Environment file written (profile: ${compose_profile})."
