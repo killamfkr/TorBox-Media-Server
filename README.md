@@ -569,6 +569,19 @@ The following environment variables can be set before running `./setup.sh --yes`
    cd /DATA/AppData/torbox-media-server && ./manage.sh restart
    ```
    Or re-run the curl installer (it auto-repairs `.env` now).
+6. **Radarr/Sonarr unhealthy on first start** — common on slower CasaOS boxes (DB migration can take several minutes):
+   ```bash
+   sudo chown -R 1000:1000 /DATA/AppData/torbox-media-server/configs /DATA/AppData/torbox-media-server/data
+   sudo mkdir -p /DATA/Media/torbox-media
+   sudo mount --bind /DATA/Media/torbox-media /DATA/Media/torbox-media 2>/dev/null || true
+   sudo mount --make-shared /DATA/Media/torbox-media
+   docker logs radarr --tail 50
+   docker logs sonarr --tail 50
+   cd /DATA/AppData/torbox-media-server-src && git pull
+   cp docker-compose.yml /DATA/AppData/torbox-media-server/
+   cd /DATA/AppData/torbox-media-server && sudo ./manage.sh restart
+   ```
+   Wait 3–5 minutes on first boot before checking `docker ps` again.
 
 ---
 

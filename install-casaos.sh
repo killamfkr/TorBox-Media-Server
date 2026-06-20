@@ -71,6 +71,23 @@ repair_env_file() {
     fi
 }
 
+ensure_mount_propagation() {
+    log "Ensuring FUSE mount propagation on ${TORBOX_MOUNT_DIR}..."
+    run_root mkdir -p "${TORBOX_MOUNT_DIR}"
+    run_root mount --bind "${TORBOX_MOUNT_DIR}" "${TORBOX_MOUNT_DIR}" 2>/dev/null || true
+    run_root mount --make-shared "${TORBOX_MOUNT_DIR}" 2>/dev/null || true
+}
+
+repair_permissions() {
+    local env="${INSTALL_DIR}/.env" puid pgid
+    [[ -f "$env" ]] || return 0
+    puid="$(grep '^PUID=' "$env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    pgid="$(grep '^PGID=' "$env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    [[ "$puid" =~ ^[0-9]+$ && "$pgid" =~ ^[0-9]+$ && "$puid" != "0" ]] || return 0
+    log "Fixing file ownership for container user ${puid}:${pgid}..."
+    run_root chown -R "${puid}:${pgid}" "${INSTALL_DIR}/configs" "${INSTALL_DIR}/data" "${TORBOX_MOUNT_DIR}" 2>/dev/null || true
+}
+
 apply_casaos_compose_fixes() {
     local compose="${INSTALL_DIR}/docker-compose.yml"
     [[ -f "$compose" ]] || return 0
@@ -192,6 +209,8 @@ fi
 
 apply_casaos_compose_fixes
 repair_env_file
+ensure_mount_propagation
+repair_permissions
 
 if [[ -x "${INSTALL_DIR}/manage.sh" ]]; then
     log "Restarting services with CasaOS network settings..."

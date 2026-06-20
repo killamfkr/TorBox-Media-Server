@@ -3109,10 +3109,10 @@ main() {
     generate_management_script
     generate_systemd_service
 
-    # Fix ownership for custom PUID/PGID (after all config files are generated)
-    if [[ "${PUID}" != "$(id -u)" || "${PGID}" != "$(id -g)" ]]; then
-        log_step "Applying custom PUID/PGID ownership to config and data directories..."
-        sudo chown -R "${PUID}:${PGID}" "${CONFIG_DIR}" "${DATA_DIR}"
+    # Ensure container user can read configs (common CasaOS issue when setup runs as root)
+    if [[ "${PUID}" != "0" ]]; then
+        log_step "Applying PUID/PGID ownership to config, data, and mount directories..."
+        sudo chown -R "${PUID}:${PGID}" "${CONFIG_DIR}" "${DATA_DIR}" "${MOUNT_DIR}" 2>/dev/null || true
     fi
 
     # start_services may fail (e.g. docker daemon down, port conflict). Don't
