@@ -1590,7 +1590,7 @@ sync_arr_auth() {
     updated="$(echo "$auth_config" | jq \
         --arg user "$user" \
         --arg pass "$pass" \
-        '.authenticationMethod = "Forms" | .authenticationRequired = "Enabled" | .username = $user | .password = $pass' 2>/dev/null)" || true
+        '.authenticationMethod = "Forms" | .authenticationRequired = "Enabled" | .username = $user | .password = $pass | .passwordConfirmation = $pass' 2>/dev/null)" || true
     if [[ -z "$updated" ]]; then
         echo -e "${YELLOW}Skipping ${name}: could not build auth update${NC}"
         return 1
@@ -1600,6 +1600,15 @@ sync_arr_auth() {
         -H "Content-Type: application/json" \
         -H "X-Api-Key: ${api_key}" \
         "${url}/api/${api_ver}/config/host/${auth_id}" \
+        -d @- -o /dev/null 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} ${name} login synced (user: ${user})"
+        return 0
+    fi
+
+    if echo "$updated" | curl -sf --connect-timeout 5 --max-time 15 -X PUT \
+        -H "Content-Type: application/json" \
+        -H "X-Api-Key: ${api_key}" \
+        "${url}/api/${api_ver}/config/host" \
         -d @- -o /dev/null 2>/dev/null; then
         echo -e "${GREEN}✓${NC} ${name} login synced (user: ${user})"
         return 0
@@ -2609,7 +2618,7 @@ configure_arr_auth() {
     updated_auth=$(echo "$auth_config" | jq \
         --arg user "$admin_user" \
         --arg pass "$admin_pass" \
-        '.authenticationMethod = "Forms" | .authenticationRequired = "Enabled" | .username = $user | .password = $pass' 2>/dev/null) || true
+        '.authenticationMethod = "Forms" | .authenticationRequired = "Enabled" | .username = $user | .password = $pass | .passwordConfirmation = $pass' 2>/dev/null) || true
     [[ -z "$updated_auth" ]] && {
         log_warn "  Could not update ${name} auth config."
         return 1
@@ -2634,9 +2643,21 @@ configure_arr_auth() {
         echo "${env_key_prefix}_PASS=\"${admin_pass}\"" >>"${ENV_FILE}.tmp"
         mv "${ENV_FILE}.tmp" "${ENV_FILE}"
         chmod 600 "${ENV_FILE}"
-    else
-        log_warn "  Failed to configure ${name} auth."
+        return 0
     fi
+
+    # Some *arr versions accept PUT on /config/host without the id suffix
+    if echo "$updated_auth" | curl -sf --connect-timeout 5 --max-time 15 -X PUT \
+        -H "Content-Type: application/json" \
+        -H "X-Api-Key: ${api_key}" \
+        "${url}/api/${api_ver}/config/host" \
+        -d @- -o /dev/null 2>/dev/null; then
+        log_info "  ${name} auth set to Forms (Enabled) with auto-generated credentials."
+        return 0
+    fi
+
+    log_warn "  Failed to configure ${name} auth."
+    return 1
 }
 
 sync_arr_logins_only() {
