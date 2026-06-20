@@ -1128,11 +1128,8 @@ generate_arr_configs() {
     done
 
     # Only write fresh config.xml if it doesn't already exist
-    # NOTE: AuthenticationRequired is set to "Enabled" (not "DisabledForLocalAddresses")
-    # so the *arr services REQUIRE login from first boot, even on localhost. This closes
-    # the brief window between container startup and configure_arr_auth() finishing where
-    # the UI would otherwise be unauthenticated. The username/password are seeded into
-    # the SQLite database by configure_arr_auth() via the API once the service is ready.
+    # NOTE: Start with DisabledForLocalAddresses so the UI is reachable if auto-config
+    # has not run yet. configure_arr_auth() switches to Forms+Enabled via the API.
     if [[ ! -f "${CONFIG_DIR}/radarr/config.xml" ]]; then
         # --- Radarr config.xml ---
         cat >"${CONFIG_DIR}/radarr/config.xml" <<RADARR_XML_EOF
@@ -1145,7 +1142,7 @@ generate_arr_configs() {
   <BindAddress>*</BindAddress>
   <ApiKey>${RADARR_API_KEY}</ApiKey>
   <AuthenticationMethod>Forms</AuthenticationMethod>
-  <AuthenticationRequired>Enabled</AuthenticationRequired>
+  <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
   <Branch>master</Branch>
   <InstanceName>Radarr</InstanceName>
 </Config>
@@ -1165,7 +1162,7 @@ RADARR_XML_EOF
   <BindAddress>*</BindAddress>
   <ApiKey>${SONARR_API_KEY}</ApiKey>
   <AuthenticationMethod>Forms</AuthenticationMethod>
-  <AuthenticationRequired>Enabled</AuthenticationRequired>
+  <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
   <Branch>main</Branch>
   <InstanceName>Sonarr</InstanceName>
 </Config>
@@ -1185,7 +1182,7 @@ SONARR_XML_EOF
   <BindAddress>*</BindAddress>
   <ApiKey>${PROWLARR_API_KEY}</ApiKey>
   <AuthenticationMethod>Forms</AuthenticationMethod>
-  <AuthenticationRequired>Enabled</AuthenticationRequired>
+  <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
   <Branch>develop</Branch>
   <InstanceName>Prowlarr</InstanceName>
 </Config>
@@ -1489,6 +1486,7 @@ show_help() {
     echo "  down        Stop and remove containers"
     echo "  urls        Show all service URLs"
     echo "  keys        Show API keys"
+    echo "  reset-auth  Push admin passwords from .env into Radarr/Sonarr/Prowlarr"
     echo "  enable      Enable auto-start on boot"
     echo "  disable     Disable auto-start on boot"
     echo "  backup      Back up configs and .env"
@@ -1557,6 +1555,70 @@ cmd_keys() {
     echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
 
+sync_arr_auth() {
+    local name="$1" port="$2" api_key_var="$3" user_var="$4" pass_var="$5" api_ver="${6:-v3}"
+    local api_key user pass url auth_config auth_id updated
+
+    if ! command -v jq &>/dev/null; then
+        echo -e "${RED}jq is required. Install jq and retry.${NC}" >&2
+        return 1
+    fi
+
+    api_key="$(env_val "$api_key_var")"
+    user="$(env_val "$user_var")"
+    pass="$(env_val "$pass_var")"
+    url="http://localhost:${port}"
+
+    if [[ -z "$api_key" || -z "$user" || -z "$pass" ]]; then
+        echo -e "${YELLOW}Skipping ${name}: missing API key or admin credentials in .env${NC}"
+        return 1
+    fi
+
+    auth_config="$(curl -sf --connect-timeout 5 --max-time 15 -H "X-Api-Key: ${api_key}" \
+        "${url}/api/${api_ver}/config/host" 2>/dev/null)" || true
+    if [[ -z "$auth_config" ]]; then
+        echo -e "${YELLOW}Skipping ${name}: service not reachable on port ${port}${NC}"
+        return 1
+    fi
+
+    auth_id="$(echo "$auth_config" | jq -r '.id' 2>/dev/null)" || true
+    if [[ -z "$auth_id" || "$auth_id" == "null" ]]; then
+        echo -e "${YELLOW}Skipping ${name}: could not read auth config${NC}"
+        return 1
+    fi
+
+    updated="$(echo "$auth_config" | jq \
+        --arg user "$user" \
+        --arg pass "$pass" \
+        '.authenticationMethod = "Forms" | .authenticationRequired = "Enabled" | .username = $user | .password = $pass' 2>/dev/null)" || true
+    if [[ -z "$updated" ]]; then
+        echo -e "${YELLOW}Skipping ${name}: could not build auth update${NC}"
+        return 1
+    fi
+
+    if echo "$updated" | curl -sf --connect-timeout 5 --max-time 15 -X PUT \
+        -H "Content-Type: application/json" \
+        -H "X-Api-Key: ${api_key}" \
+        "${url}/api/${api_ver}/config/host/${auth_id}" \
+        -d @- -o /dev/null 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} ${name} login synced (user: ${user})"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Failed to sync ${name} login${NC}"
+    return 1
+}
+
+reset_auth_cmd() {
+    echo -e "${CYAN}Syncing admin logins from .env to Radarr, Sonarr, and Prowlarr...${NC}"
+    echo ""
+    sync_arr_auth "Radarr" 7878 RADARR_API_KEY RADARR_ADMIN_USER RADARR_ADMIN_PASS v3 || true
+    sync_arr_auth "Sonarr" 8989 SONARR_API_KEY SONARR_ADMIN_USER SONARR_ADMIN_PASS v3 || true
+    sync_arr_auth "Prowlarr" 9696 PROWLARR_API_KEY PROWLARR_ADMIN_USER PROWLARR_ADMIN_PASS v1 || true
+    echo ""
+    echo -e "Use ${BOLD}./manage.sh keys --show-secrets${NC} to view credentials."
+}
+
 
 case "${1:-help}" in
     start)
@@ -1606,6 +1668,9 @@ case "${1:-help}" in
         ;;
     keys)
         cmd_keys "$@"
+        ;;
+    reset-auth)
+        reset_auth_cmd
         ;;
     enable)
         if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
@@ -2487,16 +2552,8 @@ configure_arr_auth() {
         return 1
     }
 
-    # Check if auth is already set to Forms and Required
-    if (echo "$auth_config" | grep -q '"authenticationMethod":"Forms"' 2>/dev/null ||
-        echo "$auth_config" | grep -q '"authenticationMethod": "Forms"' 2>/dev/null) &&
-        (echo "$auth_config" | grep -q '"authenticationRequired":"Enabled"' 2>/dev/null ||
-            echo "$auth_config" | grep -q '"authenticationRequired": "Enabled"' 2>/dev/null) &&
-        (echo "$auth_config" | grep -q '"username":' 2>/dev/null &&
-            ! echo "$auth_config" | grep -q '"username": ""' 2>/dev/null); then
-        log_info "  ${name} already has Forms authentication configured."
-        return 0
-    fi
+    # Always push credentials from .env — they may never have been applied if a prior
+    # install pass failed before configure_arrs() ran (common on slow CasaOS first boot).
 
     # Reuse credentials already generated in gather_config() / read back from .env.
     # Generating NEW credentials here would desynchronize the .env file (which already
@@ -2579,6 +2636,47 @@ configure_arr_auth() {
         chmod 600 "${ENV_FILE}"
     else
         log_warn "  Failed to configure ${name} auth."
+    fi
+}
+
+sync_arr_logins_only() {
+    log_section "Syncing *arr Admin Logins from .env"
+
+    if [[ ! -f "${ENV_FILE}" ]]; then
+        log_error "No installation at ${INSTALL_DIR}. Run ./setup.sh first."
+        exit 1
+    fi
+
+    if ! command -v jq &>/dev/null; then
+        log_error "jq is required for --sync-auth."
+        exit 1
+    fi
+
+    local _env_get
+    _env_get() {
+        grep "^${1}=" "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '\r'
+    }
+
+    RADARR_API_KEY="$(_env_get RADARR_API_KEY)"
+    SONARR_API_KEY="$(_env_get SONARR_API_KEY)"
+    PROWLARR_API_KEY="$(_env_get PROWLARR_API_KEY)"
+    RADARR_ADMIN_USER="$(_env_get RADARR_ADMIN_USER)"
+    RADARR_ADMIN_PASS="$(_env_get RADARR_ADMIN_PASS)"
+    SONARR_ADMIN_USER="$(_env_get SONARR_ADMIN_USER)"
+    SONARR_ADMIN_PASS="$(_env_get SONARR_ADMIN_PASS)"
+    PROWLARR_ADMIN_USER="$(_env_get PROWLARR_ADMIN_USER)"
+    PROWLARR_ADMIN_PASS="$(_env_get PROWLARR_ADMIN_PASS)"
+
+    local failed=0
+    configure_arr_auth "Radarr" "http://localhost:${SVC_PORTS[radarr]}" "$RADARR_API_KEY" || failed=$((failed + 1))
+    configure_arr_auth "Sonarr" "http://localhost:${SVC_PORTS[sonarr]}" "$SONARR_API_KEY" || failed=$((failed + 1))
+    configure_arr_auth "Prowlarr" "http://localhost:${SVC_PORTS[prowlarr]}" "$PROWLARR_API_KEY" "v1" || failed=$((failed + 1))
+
+    if [[ $failed -eq 0 ]]; then
+        log_info "Admin logins synced. Use: cd ${INSTALL_DIR} && ./manage.sh keys --show-secrets"
+    else
+        log_warn "${failed} service(s) could not be updated. Are Radarr/Sonarr/Prowlarr running?"
+        exit 1
     fi
 }
 
@@ -3005,6 +3103,7 @@ start_services() {
 # ============================================================================
 
 NON_INTERACTIVE=false
+SYNC_AUTH_ONLY=false
 
 main() {
     # Parse command-line flags (moved to the very beginning)
@@ -3012,6 +3111,7 @@ main() {
         case "$arg" in
             -y | --yes | --non-interactive) NON_INTERACTIVE=true ;;
             -d | --dry-run) DRY_RUN=true ;;
+            --sync-auth) SYNC_AUTH_ONLY=true; NON_INTERACTIVE=true ;;
             -h | --help)
                 echo "TorBox Media Server Setup v${VERSION}"
                 echo "Usage: ./setup.sh [OPTIONS]"
@@ -3019,6 +3119,7 @@ main() {
                 echo "Options:"
                 echo "  -y, --yes, --non-interactive  Use defaults for all prompts"
                 echo "  -d, --dry-run                 Preview changes without applying them"
+                echo "  --sync-auth                   Push .env admin passwords into *arr apps"
                 echo "  -h, --help                    Show this help"
                 echo ""
                 echo "Environment variables for non-interactive mode:"
@@ -3038,6 +3139,12 @@ main() {
                 ;;
         esac
     done
+
+    if [[ "${SYNC_AUTH_ONLY}" == "true" ]]; then
+        print_banner
+        sync_arr_logins_only
+        exit 0
+    fi
 
     # Warn if running as root (PUID/PGID would default to 0:0, usually undesirable)
     if [[ $EUID -eq 0 ]]; then

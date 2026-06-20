@@ -582,6 +582,12 @@ The following environment variables can be set before running `./setup.sh --yes`
    cd /DATA/AppData/torbox-media-server && sudo ./manage.sh restart
    ```
    Wait 3–5 minutes on first boot before checking `docker ps` again.
+7. **Radarr/Sonarr password from `.env` does not work** — passwords are written to `.env` at install time but only applied to the apps when auto-config runs. If containers were unhealthy during setup, sync them:
+   ```bash
+   cd /DATA/AppData/torbox-media-server-src && git pull
+   TORBOX_INSTALL_DIR=/DATA/AppData/torbox-media-server ./setup.sh --sync-auth
+   ```
+   Or after updating `manage.sh`: `cd /DATA/AppData/torbox-media-server && ./manage.sh reset-auth`
 
 ---
 

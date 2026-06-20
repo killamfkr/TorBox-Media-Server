@@ -215,6 +215,10 @@ repair_permissions
 if [[ -x "${INSTALL_DIR}/manage.sh" ]]; then
     log "Restarting services with CasaOS network settings..."
     (cd "${INSTALL_DIR}" && ./manage.sh restart) || true
+    if [[ -x "${REPO_DIR}/setup.sh" ]]; then
+        log "Syncing Radarr/Sonarr/Prowlarr admin logins..."
+        (cd "${REPO_DIR}" && TORBOX_INSTALL_DIR="${INSTALL_DIR}" ./setup.sh --sync-auth) || true
+    fi
 fi
 
 if verify_install; then

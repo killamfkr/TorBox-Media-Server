@@ -385,7 +385,7 @@ manage_heredoc=$(awk "/cat >.*manage.sh.*<<'MANAGE_EOF'/,/^MANAGE_EOF$/" "$SETUP
 manage_inline=$(awk "/cat >>.*manage.sh.*<<'MANAGE_INLINE'/,/^MANAGE_INLINE$/" "$SETUP_SCRIPT" 2>/dev/null || true)
 
 # 6.1 manage.sh has all required commands
-for cmd in start stop restart status logs pull update down urls keys enable disable backup restore health shell version help; do
+for cmd in start stop restart status logs pull update down urls keys reset-auth enable disable backup restore health shell version help; do
     if echo "$manage_heredoc" "$manage_inline" | grep -qE "^\s+${cmd}[)|]"; then
         pass "manage.sh includes '${cmd}' command"
     elif echo "$manage_heredoc" | grep -q "$cmd"; then
