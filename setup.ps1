@@ -707,6 +707,7 @@ function Invoke-ConfigureArrAuth {
             $config.authenticationRequired = "enabled"
             $config.username = $user
             $config.password = $pass
+            $config.passwordConfirmation = $pass
 
             Invoke-RestMethod -Uri $settingsUrl -Method Put -Headers $headers -Body ($config | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
             Write-LogInfo "  $Name authentication configured (Forms)."

@@ -1590,31 +1590,37 @@ sync_arr_auth() {
     updated="$(echo "$auth_config" | jq \
         --arg user "$user" \
         --arg pass "$pass" \
-        '.authenticationMethod = "Forms" | .authenticationRequired = "Enabled" | .username = $user | .password = $pass | .passwordConfirmation = $pass' 2>/dev/null)" || true
+        '.authenticationMethod = "forms"
+         | .authenticationRequired = "enabled"
+         | .username = $user
+         | .password = $pass
+         | .passwordConfirmation = $pass' 2>/dev/null)" || true
     if [[ -z "$updated" ]]; then
         echo -e "${YELLOW}Skipping ${name}: could not build auth update${NC}"
         return 1
     fi
 
-    if echo "$updated" | curl -sf --connect-timeout 5 --max-time 15 -X PUT \
-        -H "Content-Type: application/json" \
-        -H "X-Api-Key: ${api_key}" \
-        "${url}/api/${api_ver}/config/host/${auth_id}" \
-        -d @- -o /dev/null 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} ${name} login synced (user: ${user})"
-        return 0
-    fi
-
-    if echo "$updated" | curl -sf --connect-timeout 5 --max-time 15 -X PUT \
-        -H "Content-Type: application/json" \
-        -H "X-Api-Key: ${api_key}" \
+    local endpoint tmp http_code err_body
+    tmp=$(mktemp /tmp/torbox-arr-put.XXXXXX)
+    for endpoint in \
         "${url}/api/${api_ver}/config/host" \
-        -d @- -o /dev/null 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} ${name} login synced (user: ${user})"
-        return 0
-    fi
+        "${url}/api/${api_ver}/config/host/${auth_id}"; do
+        http_code=$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp" -w '%{http_code}' -X PUT \
+            -H "Content-Type: application/json" \
+            -H "X-Api-Key: ${api_key}" \
+            "${endpoint}" \
+            -d "$updated" 2>/dev/null) || http_code="000"
 
-    echo -e "${YELLOW}Failed to sync ${name} login${NC}"
+        if [[ "$http_code" =~ ^2 ]]; then
+            rm -f "$tmp"
+            echo -e "${GREEN}✓${NC} ${name} login synced (user: ${user})"
+            return 0
+        fi
+    done
+
+    err_body=$(tr '\n' ' ' <"$tmp" 2>/dev/null | head -c 200)
+    rm -f "$tmp"
+    echo -e "${YELLOW}Failed to sync ${name} login (HTTP ${http_code})${err_body:+: ${err_body}}${NC}"
     return 1
 }
 
@@ -2548,6 +2554,46 @@ add_default_indexer() {
 #  Auto-Configure Authentication for *arr Services
 # ============================================================================
 
+# *arr REST APIs expect lowercase enum strings (e.g. "forms", "enabled"), not PascalCase.
+arr_build_auth_update_json() {
+    local auth_config="$1" admin_user="$2" admin_pass="$3"
+    echo "$auth_config" | jq \
+        --arg user "$admin_user" \
+        --arg pass "$admin_pass" \
+        '.authenticationMethod = "forms"
+         | .authenticationRequired = "enabled"
+         | .username = $user
+         | .password = $pass
+         | .passwordConfirmation = $pass' 2>/dev/null
+}
+
+# PUT host config; prefers /config/host (id in body), falls back to /config/host/{id}.
+arr_put_host_config() {
+    local name="$1" url="$2" api_key="$3" api_ver="$4" payload="$5" auth_id="$6"
+    local endpoint tmp http_code err_body
+
+    tmp=$(mktemp /tmp/torbox-arr-put.XXXXXX)
+    for endpoint in \
+        "${url}/api/${api_ver}/config/host" \
+        "${url}/api/${api_ver}/config/host/${auth_id}"; do
+        http_code=$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp" -w '%{http_code}' -X PUT \
+            -H "Content-Type: application/json" \
+            -H "X-Api-Key: ${api_key}" \
+            "${endpoint}" \
+            -d "$payload" 2>/dev/null) || http_code="000"
+
+        if [[ "$http_code" =~ ^2 ]]; then
+            rm -f "$tmp"
+            return 0
+        fi
+    done
+
+    err_body=$(tr '\n' ' ' <"$tmp" 2>/dev/null | head -c 400)
+    log_warn "  ${name} auth PUT failed (HTTP ${http_code})${err_body:+: ${err_body}}"
+    rm -f "$tmp"
+    return 1
+}
+
 configure_arr_auth() {
     local name="$1" url="$2" api_key="$3" api_ver="${4:-v3}"
 
@@ -2615,20 +2661,13 @@ configure_arr_auth() {
     }
 
     local updated_auth
-    updated_auth=$(echo "$auth_config" | jq \
-        --arg user "$admin_user" \
-        --arg pass "$admin_pass" \
-        '.authenticationMethod = "Forms" | .authenticationRequired = "Enabled" | .username = $user | .password = $pass | .passwordConfirmation = $pass' 2>/dev/null) || true
+    updated_auth=$(arr_build_auth_update_json "$auth_config" "$admin_user" "$admin_pass") || true
     [[ -z "$updated_auth" ]] && {
         log_warn "  Could not update ${name} auth config."
         return 1
     }
 
-    if echo "$updated_auth" | curl -sf --connect-timeout 5 --max-time 15 -X PUT \
-        -H "Content-Type: application/json" \
-        -H "X-Api-Key: ${api_key}" \
-        "${url}/api/${api_ver}/config/host/${auth_id}" \
-        -d @- -o /dev/null 2>/dev/null; then
+    if arr_put_host_config "$name" "$url" "$api_key" "$api_ver" "$updated_auth" "$auth_id"; then
         log_info "  ${name} auth set to Forms (Enabled) with auto-generated credentials."
         local env_key_prefix
         case "$name" in
@@ -2643,16 +2682,6 @@ configure_arr_auth() {
         echo "${env_key_prefix}_PASS=\"${admin_pass}\"" >>"${ENV_FILE}.tmp"
         mv "${ENV_FILE}.tmp" "${ENV_FILE}"
         chmod 600 "${ENV_FILE}"
-        return 0
-    fi
-
-    # Some *arr versions accept PUT on /config/host without the id suffix
-    if echo "$updated_auth" | curl -sf --connect-timeout 5 --max-time 15 -X PUT \
-        -H "Content-Type: application/json" \
-        -H "X-Api-Key: ${api_key}" \
-        "${url}/api/${api_ver}/config/host" \
-        -d @- -o /dev/null 2>/dev/null; then
-        log_info "  ${name} auth set to Forms (Enabled) with auto-generated credentials."
         return 0
     fi
 
@@ -2675,7 +2704,7 @@ sync_arr_logins_only() {
 
     local _env_get
     _env_get() {
-        grep "^${1}=" "${ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '\r'
+        grep "^${1}=" "${ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/#.*$//' | tr -d '"' | tr -d "'" | tr -d '\r'
     }
 
     RADARR_API_KEY="$(_env_get RADARR_API_KEY)"

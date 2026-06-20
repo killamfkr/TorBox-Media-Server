@@ -240,6 +240,19 @@ else
     pass "BUG-2: configure_arr_auth handles API version correctly"
 fi
 
+# 4.2b *arr auth sync must use lowercase API enum strings and passwordConfirmation
+auth_helpers=$(sed -n '/^arr_build_auth_update_json()/,/^}/p' "$SETUP_SCRIPT")
+if echo "$auth_helpers" | grep -q 'authenticationMethod = "forms"' &&
+    echo "$auth_helpers" | grep -q 'authenticationRequired = "enabled"' &&
+    echo "$auth_helpers" | grep -q 'passwordConfirmation'; then
+    pass "BUG-2b: *arr auth payload uses lowercase enums and passwordConfirmation"
+elif echo "$auth_helpers" | grep -q 'authenticationMethod = "Forms"'; then
+    fail "BUG-2b: *arr auth uses PascalCase enums — Radarr API rejects PUT" \
+        "Use lowercase: forms, enabled"
+else
+    warn "BUG-2b: Could not verify arr_build_auth_update_json enum casing"
+fi
+
 # 4.3 BUG-3: Admin credential preservation must check each service independently
 cred_block=$(sed -n '/EXISTING_RADARR_ADMIN_USER/,/PROWLARR_ADMIN_PASS/p' "$SETUP_SCRIPT" | head -20)
 if echo "$cred_block" | grep -q 'EXISTING_RADARR_ADMIN_USER' &&
