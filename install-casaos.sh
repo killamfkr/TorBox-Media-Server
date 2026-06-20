@@ -75,6 +75,14 @@ apply_casaos_compose_fixes() {
     local compose="${INSTALL_DIR}/docker-compose.yml"
     [[ -f "$compose" ]] || return 0
 
+    # Refresh compose from repo (picks up image tag fixes)
+    if [[ -f "${REPO_DIR}/docker-compose.yml" ]]; then
+        cp "${REPO_DIR}/docker-compose.yml" "$compose"
+    fi
+
+    # GHCR semver tags omit the leading "v" (2.1.0 not v2.1.0)
+    sed -i -E 's|ghcr.io/thephaseless/byparr:v([0-9]+\.[0-9]+\.[0-9]+)|ghcr.io/thephaseless/byparr:\1|g' "$compose"
+
     log "Exposing service ports on LAN (CasaOS)..."
     sed -i 's/127\.0\.0\.1:/0.0.0.0:/g' "$compose"
 
