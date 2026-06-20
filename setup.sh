@@ -1517,42 +1517,42 @@ show_urls() {
 cmd_keys() {
     local show_secrets=false
     local _radarr_pass _sonarr_pass _prowlarr_pass
-    if [[ "\$2" == "--show-secrets" ]]; then
+    if [[ "$2" == "--show-secrets" ]]; then
         show_secrets=true
     fi
 
     mask_val() {
-        local val="\$1"
-        if [[ "\$show_secrets" == "true" ]]; then
-            echo "\$val"
-        elif [[ \${#val} -gt 8 ]]; then
-            echo "\${val:0:4}...<hidden>...\${val: -4}"
+        local val="$1"
+        if [[ "$show_secrets" == "true" ]]; then
+            echo "$val"
+        elif [[ ${#val} -gt 8 ]]; then
+            echo "${val:0:4}...<hidden>...${val: -4}"
         else
             echo "***<hidden>***"
         fi
     }
 
     echo -e "\n${CYAN}━━━━ API Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    if [[ "\$show_secrets" == "true" ]]; then
+    if [[ "$show_secrets" == "true" ]]; then
         echo -e "  ${YELLOW}WARNING: Sensitive credentials below. Do not share this output.${NC}\n"
     else
         echo -e "  ${YELLOW}Secrets masked. Use './manage.sh keys --show-secrets' to reveal.${NC}\n"
     fi
 
-    echo -e "  ${BOLD}TorBox${NC}    \$(mask_val \"\$(env_val TORBOX_API_KEY)\")"
-    echo -e "  ${BOLD}Radarr${NC}    \$(mask_val \"\$(env_val RADARR_API_KEY)\")"
-    echo -e "  ${BOLD}Sonarr${NC}    \$(mask_val \"\$(env_val SONARR_API_KEY)\")"
-    echo -e "  ${BOLD}Prowlarr${NC}  \$(mask_val \"\$(env_val PROWLARR_API_KEY)\")"
+    echo -e "  ${BOLD}TorBox${NC}    $(mask_val "$(env_val TORBOX_API_KEY)")"
+    echo -e "  ${BOLD}Radarr${NC}    $(mask_val "$(env_val RADARR_API_KEY)")"
+    echo -e "  ${BOLD}Sonarr${NC}    $(mask_val "$(env_val SONARR_API_KEY)")"
+    echo -e "  ${BOLD}Prowlarr${NC}  $(mask_val "$(env_val PROWLARR_API_KEY)")"
 
-    _radarr_pass="\$(env_val RADARR_ADMIN_PASS)"
-    _sonarr_pass="\$(env_val SONARR_ADMIN_PASS)"
-    _prowlarr_pass="\$(env_val PROWLARR_ADMIN_PASS)"
-    if [[ -n "\$_radarr_pass" ]]; then
+    _radarr_pass="$(env_val RADARR_ADMIN_PASS)"
+    _sonarr_pass="$(env_val SONARR_ADMIN_PASS)"
+    _prowlarr_pass="$(env_val PROWLARR_ADMIN_PASS)"
+    if [[ -n "$_radarr_pass" ]]; then
         echo ""
         echo -e "  ${BOLD}Admin Credentials:${NC}"
-        echo -e "  ${BOLD}Radarr${NC}    user: \$(env_val RADARR_ADMIN_USER)  pass: \$(mask_val \"\${_radarr_pass}\")"
-        echo -e "  ${BOLD}Sonarr${NC}    user: \$(env_val SONARR_ADMIN_USER)  pass: \$(mask_val \"\${_sonarr_pass}\")"
-        echo -e "  ${BOLD}Prowlarr${NC}  user: \$(env_val PROWLARR_ADMIN_USER)  pass: \$(mask_val \"\${_prowlarr_pass}\")"
+        echo -e "  ${BOLD}Radarr${NC}    user: $(env_val RADARR_ADMIN_USER)  pass: $(mask_val "${_radarr_pass}")"
+        echo -e "  ${BOLD}Sonarr${NC}    user: $(env_val SONARR_ADMIN_USER)  pass: $(mask_val "${_sonarr_pass}")"
+        echo -e "  ${BOLD}Prowlarr${NC}  user: $(env_val PROWLARR_ADMIN_USER)  pass: $(mask_val "${_prowlarr_pass}")"
     fi
     echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }

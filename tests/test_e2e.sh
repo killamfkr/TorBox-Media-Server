@@ -412,6 +412,11 @@ if bash -n "$tmpfile" 2>/dev/null; then
 else
     fail "Generated manage.sh has invalid bash syntax"
 fi
+if grep -q '\\$(mask_val' "$tmpfile" 2>/dev/null; then
+    fail "manage.sh cmd_keys prints literal \$(mask_val ...) — fix heredoc escaping"
+else
+    pass "manage.sh cmd_keys evaluates mask_val at runtime"
+fi
 rm -f "$tmpfile"
 
 # ============================================================================
