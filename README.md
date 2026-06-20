@@ -37,19 +37,33 @@ Run `./setup.sh --help` for all available options.
 
 ### CasaOS (Ubuntu)
 
-SSH into your CasaOS box and run (replace `your-api-key` with your [TorBox API key](https://torbox.app/settings)):
+SSH into your CasaOS box. **You must pass your TorBox API key** (the curl one-liner cannot prompt interactively):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/killamfkr/TorBox-Media-Server/main/install-casaos.sh | TORBOX_API_KEY="your-api-key" bash
 ```
 
-For an interactive install (prompts for API key and options):
+What it does:
+- Clones source to `/DATA/AppData/torbox-media-server-src`
+- Installs configs + containers to `/DATA/AppData/torbox-media-server`
+- Mounts media at `/DATA/Media/torbox-media`
+- Exposes ports on your LAN (not just localhost)
+
+After install, open **Seerr** at `http://YOUR-CASAOS-IP:5055` (replace with your box's IP).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/killamfkr/TorBox-Media-Server/main/install-casaos.sh | bash
+cd /DATA/AppData/torbox-media-server && ./manage.sh status
 ```
 
-CasaOS already includes Docker, so the installer only clones the repo under `/DATA/AppData/torbox-media-server` and runs `setup.sh`. Media mount defaults to `/DATA/Media/torbox-media`. Manage the stack after install with `cd /DATA/AppData/torbox-media-server/torbox-media-server && ./manage.sh`.
+> Containers run via Docker Compose — they **won't appear as CasaOS app tiles**. Use the URLs above or `manage.sh urls`.
+
+If install failed or nothing is running, re-run the curl command above (it's safe to re-run), or manually:
+
+```bash
+cd /DATA/AppData/torbox-media-server-src
+TORBOX_INSTALL_DIR=/DATA/AppData/torbox-media-server TORBOX_CASAOS=true TORBOX_API_KEY="your-key" ./setup.sh --yes
+cd /DATA/AppData/torbox-media-server && ./manage.sh start
+```
 
 ### Windows
 
